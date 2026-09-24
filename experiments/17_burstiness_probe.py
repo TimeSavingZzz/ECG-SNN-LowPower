@@ -166,7 +166,9 @@ def main() -> None:
         st["reconstruction_rel_error"] = reconstruction_error(X, sp, theta)
         if theta in nf:
             st["input_rate_from_16"] = nf[theta]["input_k"]
-            st["input_rate_replicated"] = abs(st["event_rate"] - nf[theta]["input_k"]) < 1e-9
+            # 容差 1e-6：16 号的率在 GPU 上算、17 号在 CPU 上算，float32 归约顺序
+            # 不同会带来 ~1e-8 的差（实测最大 1.7e-8），1e-9 会误判成「未复刻」。
+            st["input_rate_replicated"] = abs(st["event_rate"] - nf[theta]["input_k"]) < 1e-6
             st["hidden_sum_from_16"] = nf[theta]["hidden_sum_k"]
         rows.append(st)
         print(f"{theta:<7}{st['event_rate']:>9.4f}{st['mean_run_len']:>10.4f}"
