@@ -48,6 +48,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import sys
@@ -118,21 +119,25 @@ def bind_theta(model, theta: float):
     return model
 
 
-def load_snn(runs_root: Path, run: str, t_dense: int):
-    """加载 run 的权重（优先 ema），构造指定 T_dense 的模型返回 (model, ckpt, labels)。"""
-    ckpt_path = runs_root / run / "best.pt"
+def load_ckpt(ckpt_path: Path):
+    """读检查点并校验它是 SNN；返回 (ckpt, labels, state)。"""
     if not ckpt_path.exists():
         raise SystemExit(f"找不到 {ckpt_path}")
     ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
     cfg = ckpt.get("cfg", {}) or {}
     model_name = cfg.get("model_name") or "snn"
     if model_name != "snn":
-        raise SystemExit(f"{run} 的 model_name={model_name}，本脚本只支持 snn")
+        raise SystemExit(f"{ckpt_path} 的 model_name={model_name}，本脚本只支持 snn")
     labels = ckpt.get("label_columns") or ["NORM", "MI", "STTC", "CD", "HYP"]
-    model = NeuroCardio(num_classes=len(labels), T_dense=t_dense)
     state = ckpt.get("ema") or ckpt.get("state_dict")
+    return ckpt, labels, state
+
+
+def build_model(labels, state, t_dense: int):
+    """用同一份权重构造指定 T_dense 的模型（T_dense 不进 state_dict，故可直接 load）。"""
+    model = NeuroCardio(num_classes=len(labels), T_dense=t_dense)
     model.load_state_dict(state)
-    return model, ckpt, labels
+    return model
 
 
 def infer_scores(model, loader, dev):
@@ -153,6 +158,10 @@ def main() -> None:
     ap.add_argument("--cache-dir", default="/mnt/ECG-SNN-LowPower/results/ptbxl_cache")
     ap.add_argument("--runs-root", default="/mnt/ECG-SNN-LowPower/results")
     ap.add_argument("--run", default="repro_snn")
+    ap.add_argument("--ckpt", default="",
+                    help="显式检查点路径；留空则用 <runs-root>/<run>/best.pt。"
+                         "训练会持续刷新 best.pt——实测它从 ep0 刷到 ep11，"
+                         "导致同一脚本两次运行得 0.4985 / 0.6705，故扫描前务必先冻结快照。")
     ap.add_argument("--out", default="/mnt/ECG-SNN-LowPower/results/pareto")
     ap.add_argument("--theta", default="0.05,0.075,0.1,0.15,0.2,0.3",
                     help="逗号分隔的编码阈值（0.15 为训练所用值=基线）")
@@ -190,10 +199,14 @@ def main() -> None:
                               num_workers=2, pin_memory=True)
     print(f"测试集 {len(test)} 条(fold10) / 标定集 {len(val)} 条(fold9)", flush=True)
 
-    # 权重只读一次，供所有点复用；T_dense 每点重新构造模型
-    _, ckpt, labels = load_snn(runs_root, args.run, t_dense_list[0])
-    state = ckpt.get("ema") or ckpt.get("state_dict")
+    # 权重只读一次并**冻结**（md5 记进产物）。训练会持续刷新 best.pt，
+    # 不冻结则 30 个点会跨越权重刷新而彼此不可比（实测踩过：同一脚本两次
+    # 运行因 best.pt 从 ep0 刷到 ep11，AUROC 得 0.4985 / 0.6705）。
+    ckpt_path = Path(args.ckpt) if args.ckpt else (runs_root / args.run / "best.pt")
+    ckpt, labels, state = load_ckpt(ckpt_path)
     ckpt_epoch = ckpt.get("epoch", -1)
+    ckpt_md5 = hashlib.md5(ckpt_path.read_bytes()).hexdigest()
+    print(f"检查点 {ckpt_path}\n  epoch={ckpt_epoch}  md5={ckpt_md5}", flush=True)
 
     # 07 的 SNN 行，用于基线自洽检查
     baseline = None
@@ -230,10 +243,9 @@ def main() -> None:
                     pass  # 文件残缺 → 重算
 
             print(f"\n[{k}/{total}] θ={theta}  T_dense={td}", flush=True)
-            model, _, labels = load_snn(runs_root, args.run, td)
-            model.load_state_dict(state)          # 复用同一份权重
+            model = build_model(labels, state, td)   # 同一份冻结权重
             model.to(dev).eval()
-            bind_theta(model, theta)              # θ 生效于 model(x)
+            bind_theta(model, theta)                 # θ 生效于 model(x)
 
             y_true, y_score, infer_s = infer_scores(model, test_loader, dev)
             metrics = multilabel_metrics(y_true, y_score, labels)
@@ -255,6 +267,8 @@ def main() -> None:
                 "is_baseline": is_baseline,
                 "run_name": args.run,
                 "checkpoint_epoch": ckpt_epoch,
+                "checkpoint_md5": ckpt_md5,
+                "checkpoint_path": str(ckpt_path),
                 "macro_auroc": metrics["macro_auroc"],
                 "macro_auprc": metrics["macro_auprc"],
                 "per_label": metrics["per_label"],
@@ -307,7 +321,17 @@ def main() -> None:
             d = abs(float(mine) - float(theirs))
             checks[key] = {"ours": float(mine), "reference_07": float(theirs),
                            "abs_diff": d, "ok": d <= args.baseline_tol}
-        consistency = checks
+        consistency = {
+            "checks": checks,
+            "note": (
+                "该检查以 comparison.json 生成时刻的权重为前提。若 best.pt 在其后被训练刷新，"
+                "macro_auroc 必然不同——这属于权重漂移，不是实现错误。"
+                "实现等价性已单独验证：同一进程内用同一份权重，11 的推理路径"
+                "（bind_theta + nw=4 + pin_memory）与 07 的复刻路径（原生 model(x) + nw=2）"
+                "在 batch_size=64 下 AUROC 与 yp_sum 逐位相同（0.670474 / 3949.4321）。"
+                "注意 total_sops / spike_rate_mean 两项不受权重漂移影响，仍可用于对拍。"
+            ),
+        }
         print("\n=== 与 07 的基线自洽检查 (θ=0.15, T_dense=8) ===", flush=True)
         for key, c in checks.items():
             flag = "OK " if c["ok"] else "FAIL"
@@ -340,7 +364,9 @@ def main() -> None:
     summary = {
         "generated_at": time.time(),
         "run_name": args.run,
+        "checkpoint_path": str(ckpt_path),
         "checkpoint_epoch": ckpt_epoch,
+        "checkpoint_md5": ckpt_md5,
         "device": dev.type,
         "n_test": len(test),
         "theta_values": thetas,
