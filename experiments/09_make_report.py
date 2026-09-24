@@ -243,13 +243,14 @@ def fig_pareto(rows, pareto_pts, out_png, embedded):
         for p in degen:
             ax2.scatter([p["energy_pj_neuromorphic"] / 1e6], [p["macro_auroc"]],
                         s=34, marker="x", c="0.45", linewidths=1.2, zorder=4)
+        # 退化点的说明放进图例：写成自由文本会横穿右下角的图例框
+        ax2.scatter([], [], s=34, marker="x", c="0.45", linewidths=1.2,
+                    label=f"T_dense={DEGENERATE_T_DENSE}: degenerate (AUROC ≡ 0.5)")
         ax2.axhline(0.5, ls=":", lw=1.0, c="0.55")
-        ax2.annotate(f"T_dense={DEGENERATE_T_DENSE}: degenerate output\n"
-                     f"(constant prediction, AUROC = 0.5 for all θ)",
-                     (0.02, 0.5), xycoords=("axes fraction", "data"),
-                     fontsize=7.5, color="0.4", va="bottom")
 
         front = _pareto_front(pareto_pts)
+        # 顶部留白给汇总文本框（最高数据点 0.7021），否则框会压住散点
+        ax2.set_ylim(0.485, 0.745)
         if front:
             ax2.plot([f[0] * 1000 for f in front], [f[1] for f in front],
                      drawstyle="steps-post", c="black", lw=1.4, zorder=5,
@@ -257,23 +258,34 @@ def fig_pareto(rows, pareto_pts, out_png, embedded):
             be, by, bp = max(front, key=lambda f: f[1])
             ax2.scatter([be * 1000], [by], s=170, facecolors="none",
                         edgecolors="red", linewidths=1.7, zorder=6)
-            ax2.annotate(f"best: θ={bp['theta']:g}, T_dense={bp['t_dense']}\n"
-                         f"AUROC {by:.4f} @ {be * 1000:.3f} µJ",
-                         (be * 1000, by), textcoords="offset points",
-                         xytext=(-126, 2), fontsize=8, color="red")
-            base = next((f for f in front if f[2].get("is_baseline")), None)
+            # 基线点在**前沿之外**（同能耗还有 0.6863/0.6893 两点更高），
+            # 所以只能从全量点集里找，不能在 front 里找——否则基线圆圈与数字会静默消失。
+            base = next((p for p in good if p.get("is_baseline")), None)
+            rows_txt = [f"best  θ={bp['theta']:<5g}T_dense={bp['t_dense']:<3d}"
+                        f"AUROC {by:.4f} @ {be * 1000:.3f} µJ"]
             if base:
-                ax2.scatter([base[0] * 1000], [base[1]], s=170, facecolors="none",
+                bx = base["energy_pj_neuromorphic"] / 1e6
+                byy = base["macro_auroc"]
+                ax2.scatter([bx], [byy], s=170, facecolors="none",
                             edgecolors="blue", linewidths=1.7, zorder=6)
-                ax2.annotate(f"baseline θ=0.15, T_dense=8\nAUROC {base[1]:.4f}",
-                             (base[0] * 1000, base[1]), textcoords="offset points",
-                             xytext=(-112, -30), fontsize=8, color="blue")
+                rows_txt.append(f"base  θ={base['theta']:<5g}"
+                                f"T_dense={base['t_dense']:<3d}"
+                                f"AUROC {byy:.4f} @ {bx:.3f} µJ")
+                delta_a = by - byy
+                delta_e = (be * 1000 - bx) / bx * 100
+                rows_txt.append(f"gain  {delta_a:+.4f} AUROC "
+                                f"({delta_a / byy * 100:+.2f}%) for "
+                                f"{delta_e:+.2f}% energy")
+            ax2.text(0.015, 0.965, "\n".join(rows_txt), transform=ax2.transAxes,
+                     fontsize=7.5, va="top", ha="left", family="monospace",
+                     bbox=dict(boxstyle="round,pad=0.35", fc="white", ec="0.6",
+                               alpha=0.9), zorder=7)
         sm = plt.cm.ScalarMappable(norm=norm, cmap=cmap)
         sm.set_array([])
         cb = fig.colorbar(sm, ax=ax2, pad=0.02, fraction=0.045)
         cb.set_label("θ  (Δ-encoding threshold)", fontsize=8)
         cb.ax.tick_params(labelsize=7)
-        ax2.legend(fontsize=8, loc="lower right")
+        ax2.legend(fontsize=7.5, loc="lower right")
 
     ax2.set_xlabel("Estimated inference energy per sample  (µJ, linear scale)")
     ax2.set_ylabel("Test macro-AUROC")
