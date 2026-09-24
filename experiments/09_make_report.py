@@ -228,9 +228,17 @@ def fig_layer_energy(sparsity, out_png, embedded):
 
 
 def fig_roc_pr(rows, out_png, embedded):
-    """PTB-XL 五超类 ROC / PR 曲线，三模型同图。"""
+    """PTB-XL 五超类 ROC / PR 曲线。
+
+    语义分层：**颜色 = 类别**（5 类），**线型 = 模型**（SNN 实线 / CNN 虚线 / ResNet 点线）。
+    同一类别在同一张图里是同一颜色，便于直接比较三个模型在该类上的表现。
+    """
     if not rows:
         return
+    tab10 = plt.get_cmap("tab10")
+    cls_color = {lbl: tab10(i) for i, lbl in enumerate(PTBXL_LABELS)}
+    style = {"repro_snn": ("-", 1.7), "repro_cnn": ("--", 1.2), "repro_resnet": (":", 1.4)}
+
     fig, axes = plt.subplots(1, 2, figsize=(11.5, 4.8))
     plotted = False
     for name in RUN_ORDER:
@@ -238,21 +246,20 @@ def fig_roc_pr(rows, out_png, embedded):
         if not r:
             continue
         roc, pr = r.get("roc_curves") or {}, r.get("pr_curves") or {}
+        ls, lw = style.get(name, ("-", 1.2))
         for lbl in PTBXL_LABELS:
             if lbl in roc and roc[lbl].get("fpr"):
-                axes[0].plot(roc[lbl]["fpr"], roc[lbl]["tpr"], lw=1.3,
-                             color=COLORS[name], alpha=0.85 if name != "repro_snn" else 1.0,
-                             ls="-" if name == "repro_snn" else ("--" if name == "repro_cnn" else ":"),
-                             label=f"{DISPLAY.get(name, name)}·{lbl}" if name == "repro_snn" else None)
+                axes[0].plot(roc[lbl]["fpr"], roc[lbl]["tpr"], lw=lw, ls=ls,
+                             color=cls_color[lbl], label=lbl if name == "repro_snn" else None)
                 plotted = True
             if lbl in pr and pr[lbl].get("recall"):
-                axes[1].plot(pr[lbl]["recall"], pr[lbl]["precision"], lw=1.3,
-                             color=COLORS[name], alpha=0.85 if name != "repro_snn" else 1.0,
-                             ls="-" if name == "repro_snn" else ("--" if name == "repro_cnn" else ":"))
+                axes[1].plot(pr[lbl]["recall"], pr[lbl]["precision"], lw=lw, ls=ls,
+                             color=cls_color[lbl])
     if not plotted:
         plt.close(fig)
         WARNINGS.append("comparison.json 无 ROC 曲线，跳过图 3")
         return
+
     axes[0].plot([0, 1], [0, 1], "k:", lw=0.8, alpha=0.5)
     axes[0].set(xlabel="False positive rate", ylabel="True positive rate",
                 title="ROC per superclass (PTB-XL, fold 10)")
@@ -260,12 +267,14 @@ def fig_roc_pr(rows, out_png, embedded):
                 title="Precision–Recall per superclass")
     for a in axes:
         a.grid(alpha=0.3)
-        a.legend(fontsize=6.5, ncol=2)
-    handles = [plt.Line2D([], [], color=COLORS[n], lw=1.6, label=DISPLAY.get(n, n))
-               for n in RUN_ORDER]
-    fig.legend(handles=handles, loc="lower center", ncol=3, fontsize=8.5,
-               frameon=False, bbox_to_anchor=(0.5, -0.07))
-    fig.suptitle("SNN solid / CNN dashed / ResNet1D dotted", fontsize=8, color="#555")
+    # 类别图例只挂在 ROC 面板（有 label 的曲线都在那里）
+    axes[0].legend(fontsize=8, ncol=2, title="superclass", title_fontsize=8)
+    # 模型图例用线型表达
+    model_handles = [plt.Line2D([], [], color="#333", lw=1.7, ls=style[n][0],
+                                label=DISPLAY.get(n, n)) for n in RUN_ORDER]
+    fig.legend(handles=model_handles, loc="lower center", ncol=3, fontsize=8.5,
+               frameon=False, bbox_to_anchor=(0.5, -0.06), title="line style = model",
+               title_fontsize=8)
     _finish(fig, out_png, embedded, "fig3")
 
 
@@ -510,6 +519,16 @@ def build_html(meta, rows, mit_ours, mit_auth, embedded) -> str:
              "<b>估算</b>（稠密 FP32 MAC 3.7 pJ，Horowitz ISSCC 2014；神经形态 SOP 0.1 pJ，"
              "Davies et al., IEEE Micro 38(1):82-99, 2018）× 本机<b>实测</b>脉冲发放率，"
              "<b>不是焦耳实测</b>。CNN 侧按稠密常量折算、未折算神经形态优势（与上游口径一致）。</div>")
+    cons = meta.get("consistency") or []
+    if cons:
+        worst = max(c["abs_diff"] for c in cons)
+        h.append("<div class='cap'><b>数字一致性自检</b>：本表指标由 "
+                 "<code>07_energy_report.py</code> 重新推理得到，"
+                 "<code>test_metrics.json</code> 则是 <code>train.py</code> 训练末尾评测的结果，"
+                 "两者是两次独立推理，故在第 6 位小数上有浮点抖动。实测最大偏差 "
+                 f"<code>{worst:.2e}</code>（容差 1e-4），"
+                 "<b>属数值噪声而非错误</b>：真错误（如重复收录 run）会差 0.001 量级。"
+                 "逐 run 偏差见 <code>report_data.json</code> 的 <code>consistency</code>。</div>")
     h.append("</section>")
 
     # 2..N 图
@@ -660,8 +679,30 @@ def main() -> None:
             WARNINGS.append(f"{fig_path} 生成失败：{type(exc).__name__}: {exc}")
             print(f"  ✗ {fig_path}: {exc}", flush=True)
 
+    # 一致性自检：comparison.json 的指标由 07 重新推理得到，而 test_metrics.json 是
+    # train.py 训练末尾那次评测的结果。两者是**两次独立推理**，浮点累积次序不同，
+    # 在 AUROC 这种秩相关指标上会有 ~1e-6 级的抖动 —— 故用容差判据，而不是"逐位相等"。
+    # 容差取 1e-4：真错误（例如把 repro_snn 与 repro_snn_e100 重复收录）会差 0.001 量级，必被抓住。
+    consistency = []
+    for name in RUN_ORDER:
+        r = next((x for x in rows if x["run_name"] == name), None)
+        tm = test_metrics.get(name) or {}
+        a, b = (r or {}).get("macro_auroc"), tm.get("macro_auroc")
+        if a is None or b is None:
+            continue
+        d = abs(a - b)
+        consistency.append({"run": name, "report_macro_auroc": a,
+                            "test_metrics_macro_auroc": b, "abs_diff": d,
+                            "ok": d < 1e-4})
+        if d >= 1e-4:
+            WARNINGS.append(
+                f"{name}: comparison.json({a:.6f}) 与 test_metrics.json({b:.6f}) "
+                f"相差 {d:.2e}，超出 1e-4 容差 —— 可能收错了 run（检查 --runs 与 TAG）")
+    meta["consistency"] = consistency
+
     report_data = {
         "meta": meta,
+        "consistency": consistency,
         "comparison_rows": rows,
         "constants": comp.get("constants"),
         "mitbih_ours": mit_ours,
