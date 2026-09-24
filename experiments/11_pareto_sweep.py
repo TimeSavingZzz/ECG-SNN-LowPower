@@ -256,19 +256,22 @@ def main() -> None:
                 "energy_pj_neuromorphic": cost.energy_pj_neuromorphic,
                 "energy_mj_dense": cost.energy_pj_dense / 1e9,
                 "energy_mj_neuromorphic": cost.energy_pj_neuromorphic / 1e9,
-                "layers": [asdict(l) for l in cost.layers],
+                # compute.py 的 ModelCost.layers 已经是 list[dict]（内部调过 asdict）；
+                # 但为兼容上游可能的改动，两种形态都接受。
+                "layers": [l if isinstance(l, dict) else asdict(l) for l in cost.layers],
                 "test_inference_seconds": infer_s,
                 "labels": labels,
                 "n_test": len(test),
                 "zero_shot": True,
             }
-            dst.write_text(json.dumps(clean(pt), indent=2, allow_nan=False))
-            points.append(pt)
+            # 先打印再落盘：万一下游序列化再出问题，数值也不会白算
             print(f"    → macro_auroc={metrics['macro_auroc']:.4f}  "
                   f"input_rate={spike_rates.get('input'):.4f}  "
                   f"sops={cost.total_sops:,}  "
                   f"E_nm={cost.energy_pj_neuromorphic / 1e9:.6f} mJ  "
                   f"lat={lat:.1f}ms  ({infer_s:.1f}s 推理)", flush=True)
+            dst.write_text(json.dumps(clean(pt), indent=2, allow_nan=False))
+            points.append(pt)
 
             del model
             if dev.type == "cuda":
