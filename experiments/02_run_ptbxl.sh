@@ -24,7 +24,7 @@ mkdir -p "$ROOT/logs" "$ROOT/results"
 LOG=$ROOT/logs/train_$TAG.log
 
 cd "$NC"
-PYTHONPATH=. CUDA_VISIBLE_DEVICES=$GPU nohup "$PY" -m neurocardio.train \
+PYTHONPATH=. CUDA_VISIBLE_DEVICES=$GPU nohup "$PY" -u -m neurocardio.train \
   --cache-dir "$CACHE" \
   --output-dir "$ROOT/results/$TAG" \
   --label-set diagnostic_superclass \

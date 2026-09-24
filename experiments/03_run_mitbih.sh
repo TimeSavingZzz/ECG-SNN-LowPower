@@ -28,7 +28,7 @@ fi
 
 if [ "$STAGE" = "all" ] || [ "$STAGE" = "train" ]; then
   echo "== 3/3 训练 Conv-LIF SNN（后台）=="
-  PYTHONPATH=. CUDA_VISIBLE_DEVICES=$GPU nohup "$PY" src/train.py \
+  PYTHONPATH=. CUDA_VISIBLE_DEVICES=$GPU nohup "$PY" -u src/train.py \
     --epochs "$EPOCHS" \
     > "$ROOT/logs/mitbih_train.log" 2>&1 &
   echo "PID: $!  日志: $ROOT/logs/mitbih_train.log"

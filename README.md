@@ -23,6 +23,20 @@
 
 MIT-BIH 分支（`archive/cardiospike_mitbih/`）：Conv-LIF SNN ≈272k 参数，25 epoch，作者报告 accuracy **0.8683**、macro-F1 **0.4153**。
 
+### 关于训练时长（对拍时的重要发现）
+
+作者配置是 `epochs=200` + `wallclock_hours=8.0`，乍看"200 轮压在 8 小时内"，实则不然。查其提交的 `results/main/history.json`，每轮 `wallclock_seconds` **非单调**：
+
+```
+ep0=708s  ep1=1411s  ep2=2109s  ep49=12795s  ep99=10599s  ep149=41608s  ep199=1218s
+```
+
+`ep0→ep2` 每个差值约 700s（=单轮真实耗时），但 ep49/ep99/ep149/ep199 的值忽大忽小——这正是**每次进程重启后计时归零**的痕迹。结论：**作者是分多段续跑跑满 200 轮的**（单段到 8h 墙钟即优雅停止、下次从 `latest.pt` 恢复），200 轮总计约 39 小时 GPU 时间。
+
+本机实测：SNN 单轮无争用 **566s**、与下载/其他训练争用时约 33 分钟，与作者同量级（甚至更快）。所以 100 轮需 16~20h，同样必须续跑，由 `experiments/08_resume_snn_until_done.sh` 负责。
+
+**续跑的数值等价性**：`latest.pt` 里除 model/ema/opt 外还存了 **`sched` 状态**，恢复时 `sched.load_state_dict` 使余弦退火沿原 `T_max=--epochs` 连续推进，`epoch_start = ckpt.epoch + 1`，且墙钟是在**轮首**检查的（到点即干净退出）。因此只要 `--epochs` 与首次启动一致（本工程统一 100），多段续跑 ≙ 一次跑完。
+
 ## 目录约定（CLAUDE.md 规定）
 
 | 位置 | 路径 |
@@ -80,7 +94,13 @@ bash experiments/03_run_mitbih.sh
 
 # 6. 能耗 / 延迟 / 精度对比表
 python3 experiments/07_energy_report.py
+
+# 7. SNN 续跑到 100 轮（作者亦为多段续跑），跑满后自动重跑 07 出最终对比表
+nohup bash experiments/08_resume_snn_until_done.sh > logs/resume_snn.log 2>&1 &
 ```
+
+> 第 4 步的 SNN 会被 `WALLCLOCK` 到点截断，此时第 6 步产出的 `comparison.json` 是**截断版**；
+> 第 7 步跑满 100 轮后会重新生成 `results/comparison.json`，以那份为准。
 
 **无人值守（推荐）**：第 1~6 步可交给编排脚本一次跑完，全程后台，Claude / SSH 断开都不影响：
 
@@ -91,14 +111,20 @@ tail -f logs/orchestrator.log        # 看进度
 
 编排逻辑：等 `records100` 齐备 → 建缓存 → GPU0/1/2 并发训练 SNN/CNN/ResNet → 等三张卡收工 → 生成 `results/comparison.json` → 打印核心数字。
 
+SNN 训练时间长于单次墙钟，故把**续跑守护**也一起挂上（它会先等 06 退出再接手，互不冲突）：
+
+```bash
+nohup bash experiments/08_resume_snn_until_done.sh > logs/resume_snn.log 2>&1 &
+```
+
 ## 进度
 
 - [x] 立项、选定上游工程
 - [x] 环境就绪（`snntorch 1.0.0` / `torch 2.5.1+cu124` / 4×RTX 3090）
 - [x] 冒烟测试通过：数据 → Δ调制脉冲编码 → SNN → BPTT → 评测 全链路，SNN 参数 1,893,768
 - [x] 发现并修复 PTB-XL 残档（夸克搬运缺一半）
-- [ ] PTB-XL 数据补齐 + 全量缓存
-- [ ] PTB-XL SNN 复现，与 0.8663 对拍
-- [ ] PTB-XL CNN / ResNet 基线复现，与 0.9017 对拍
+- [x] PTB-XL 数据补齐（records100 齐备 21799）+ 全量缓存（21388 条带诊断标签，745 MB）
+- [x] PTB-XL CNN / ResNet 基线复现（100 轮）：CNN **0.9039** vs 作者 0.9023；ResNet **0.8967** vs 作者 0.9017
+- [ ] PTB-XL SNN 复现，与 0.8663 对拍（训练中，需续跑至 100 轮）
 - [ ] MIT-BIH 分支复现，与 0.8683 / 0.4153 对拍
-- [ ] 能耗对比表复现（`07_energy_report.py`）
+- [ ] 能耗对比表复现（`07_energy_report.py`，待 SNN 跑满后由 08 重跑）
