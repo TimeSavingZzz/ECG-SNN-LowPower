@@ -20,6 +20,18 @@
   `r = spike_rates["input"]`，`sops = round(macs * r)` ⇒ θ↑ → 发放率↓ → SOP↓ 而精度↓。
   T_dense 则线性乘在 dense head 的 MAC 上。故**每个点都必须重跑 `calibrate_spike_rates`**。
 
+**评估结果依赖 batch 划分（实测发现的上游缺陷，务必与 07 用同一 batch_size）**
+  `snn.Leaky.forward` 会把传入的 `mem` 存回 `self.mem`，仅在**形状不符**时才清零
+  （`if not self.mem.shape == input_.shape: self.mem = zeros_like(...)`）；而
+  `init_leaky()` 返回 `self.mem.clone()`。`_run_lif_along_time` 每个 batch 都从
+  `init_leaky()` 起步 ⇒ **每个 batch 都继承上一个 batch 的末尾膜电位**（形状 `(B,C)`
+  只与 batch_size 有关，故不会触发清零）。实测：同一份 `best.pt`、同一 θ=0.15/T_dense=8，
+  `batch_size=64` → macro-AUROC **0.498530**，`batch_size=96` → **0.487912**，
+  且同一设置重复跑两次逐位一致（确定性、无随机性）。
+  ⇒ 本脚本因此把 `--batch-size` 与标定 batch 分别锁在 64 / 32，与 `07_energy_report.py`
+  完全对齐，使 θ=0.15/T_dense=8 的基线点可与 07 逐位对拍；30 个扫描点也因共用同一
+  batch 划分而彼此可比。**论文中应如实指出该 batch 耦合现象。**
+
 用法::
 
     CUDA_VISIBLE_DEVICES=3 python3 experiments/11_pareto_sweep.py \\
@@ -146,7 +158,10 @@ def main() -> None:
                     help="逗号分隔的编码阈值（0.15 为训练所用值=基线）")
     ap.add_argument("--t-dense", default="2,4,8,16,32",
                     help="逗号分隔的分类头积分步数（8 为模型默认=基线）")
-    ap.add_argument("--batch-size", type=int, default=96)
+    ap.add_argument("--batch-size", type=int, default=64,
+                    help="必须与 07_energy_report.py 一致（默认 64）。"
+                         "上游 snn.Leaky 的膜电位状态会跨前向调用泄漏，"
+                         "导致评估结果依赖 batch 划分；换 batch_size 会改变 AUROC。")
     ap.add_argument("--n-calib-batches", type=int, default=8)
     ap.add_argument("--n-latency-iter", type=int, default=20)
     ap.add_argument("--baseline", default="/mnt/ECG-SNN-LowPower/results/comparison.json",
