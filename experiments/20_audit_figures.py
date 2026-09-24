@@ -97,21 +97,17 @@ def fig_a_nonmono(nf, out_png: Path, embedded: dict):
     iK = int(np.argmin(sopk))
     ax.scatter([x[iK]], [sopk[iK]], s=190, facecolors="none", edgecolors=C_UP,
                linewidths=2.0, zorder=5)
-    ax.annotate(f"最小值在 θ={th[iK]}（内部点）\n非端点 ⇒ 非单调",
-                xy=(x[iK], sopk[iK]), xytext=(x[iK] + 0.15, sopk[iK] - 0.42),
-                fontsize=9, color=C_UP,
-                arrowprops=dict(arrowstyle="->", color=C_UP, lw=1.2))
 
     # 右侧抬升的显著性
     zr = nf.get("z_min_vs_right")
     zl = nf.get("z_min_vs_left")
-    if zr is not None:
+    if zr is not None and iK < len(x) - 1:
+        # 箭头弧过去；标签放右上空白区，别压在曲线上
         ax.annotate("", xy=(x[-1], sopk[-1]), xytext=(x[iK], sopk[iK]),
-                    arrowprops=dict(arrowstyle="->", color=C_WARN, lw=1.6,
-                                    connectionstyle="arc3,rad=-0.25"))
-        ax.text(x[iK] + 0.55, (sopk[iK] + sopk[-1]) / 2 + 0.28,
-                f"回升 z={zr:.2f}σ\n（远超噪声，铁证）",
-                fontsize=9, color=C_WARN, ha="left")
+                    arrowprops=dict(arrowstyle="->", color=C_WARN, lw=1.8,
+                                    connectionstyle="arc3,rad=-0.28"))
+        ax.text(x[iK] + 0.28, sopk[-1] + 0.40,
+                f"回升 z={zr:.2f}σ\n（远超噪声）", fontsize=9, color=C_WARN, ha="left")
 
     ax2 = ax.twinx()
     ax2.plot(x, inp, "--^", ms=5, lw=1.2, color=C_DOWN, alpha=0.85,
@@ -131,13 +127,17 @@ def fig_a_nonmono(nf, out_png: Path, embedded: dict):
     h2, l2 = ax2.get_legend_handles_labels()
     ax.legend(h1 + h2, l1 + l2, fontsize=8, loc="upper left", framealpha=0.9)
 
-    txt = (f"最小点稳定性：bootstrap 重采样中 argmin 落在 θ={th[iK]} 的频率 "
-           f"{nf.get('interior_argmin_freq_8batch', float('nan')):.2f}\n"
-           f"左邻 z={zl:.2f}σ（下探不显著）｜右邻 z={zr:.2f}σ（抬升极显著）"
-           if zl is not None and zr is not None else "")
-    if txt:
-        ax.text(0.985, 0.03, txt, transform=ax.transAxes, fontsize=8, ha="right",
-                va="bottom", color="#333",
+    # 统计信息统一放左下角：曲线在该区域之外（θ≤0.15 的曲线远高于此处），
+    # 不再与右侧刻度、最小值圈相互挤压。纵轴截断必须自曝，否则 2% 的差会被视觉放大。
+    if zl is not None and zr is not None:
+        ax.text(0.015, 0.035,
+                f"最小点在 θ={th[iK]}（内部点）｜bootstrap 重采样 argmin 稳定率 "
+                f"{nf.get('interior_argmin_freq_8batch', float('nan')):.2f}\n"
+                f"左邻 z={zl:.2f}σ（下探不显著）｜右邻 z={zr:.2f}σ（回升极显著）\n"
+                f"注：纵轴未从零起，全程变幅约 "
+                f"{100 * (sopk[0] - sopk[iK]) / sopk[0]:.0f}%",
+                transform=ax.transAxes, fontsize=7.5, ha="left", va="bottom",
+                color="#333",
                 bbox=dict(boxstyle="round,pad=0.4", fc="#fdf6e3", ec="#d9c9a3"))
     r9._finish(fig, out_png, embedded, "figA")
 
@@ -153,15 +153,19 @@ def fig_b_layer_reversal(nf, out_png: Path, embedded: dict):
           "block3": "块 3", "block4": "块 4", "block5": "块 5（近死层）"}
     base = next(r for r in rows if abs(r["theta"] - 0.15) < 1e-12)["per_layer_k"]
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11.2, 4.5))
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11.2, 4.6))
 
+    handles = []
     for k in keys:
-        ax1.plot(th, [r["per_layer_k"][k] for r in rows], "-o", ms=4, lw=1.3, label=cn[k])
+        ln, = ax1.plot(th, [r["per_layer_k"][k] for r in rows], "-o", ms=4, lw=1.3)
+        handles.append(ln)
     ax1.set_xlabel("θ")
     ax1.set_ylabel("该层发放率")
     ax1.set_title("(a) 各隐藏层发放率随 θ", fontsize=10)
     ax1.grid(alpha=0.25, ls=":")
-    ax1.legend(fontsize=7.5, ncol=2)
+    ax1.annotate("块 5 恒为 0（近死层）", xy=(th[-1], 0.0004), xytext=(0.165, 0.042),
+                 fontsize=8, color="#a2417f",
+                 arrowprops=dict(arrowstyle="->", color="#a2417f", lw=1.0))
 
     # Δ 相对训练阈值 θ=0.15 —— 符号随深度翻转才是要说的
     rising = {"stem", "block2", "block3"}
@@ -169,16 +173,22 @@ def fig_b_layer_reversal(nf, out_png: Path, embedded: dict):
         d = [r["per_layer_k"][k] - base[k] for r in rows]
         col = C_UP if k in rising else (C_NEUTRAL if k == "block5" else C_DOWN)
         lw = 2.2 if k in rising else 1.2
-        ax2.plot(th, d, "-o", ms=4, lw=lw, color=col, label=cn[k],
+        ax2.plot(th, d, "-o", ms=4, lw=lw, color=col,
                  alpha=0.95 if k in rising else 0.65)
     ax2.axhline(0, color="#333", lw=0.9)
     ax2.axvline(0.15, color="#999", lw=0.9, ls="--")
-    ax2.text(0.152, ax2.get_ylim()[1] * 0.9, "训练阈值 θ=0.15", fontsize=8, color="#666")
+    ax2.set_ylim(-0.011, 0.033)   # 上方留白给说明文字，否则会压住 stem 曲线
+    ax2.text(0.153, -0.0104, "θ=0.15（训练阈值）", fontsize=7.5, color="#666")
+    ax2.text(0.155, 0.0295, "红 = 增发（stem、块2、块3）｜蓝 = 减发（块0、块1）",
+             fontsize=7.5, color="#444")
     ax2.set_xlabel("θ")
     ax2.set_ylabel("发放率变化量（相对 θ=0.15）")
-    ax2.set_title("(b) 变化量的符号随深度翻转（红=增发）", fontsize=10)
+    ax2.set_title("(b) 变化量的符号随深度翻转", fontsize=10)
     ax2.grid(alpha=0.25, ls=":")
-    ax2.legend(fontsize=7.5, ncol=2)
+
+    # 7 个层名共用一条底部图例 —— 两个子图各挂一个图例必然压住曲线
+    fig.legend(handles, [cn[k] for k in keys], loc="lower center", ncol=7,
+               fontsize=8.5, frameon=False, bbox_to_anchor=(0.5, -0.075))
 
     fig.suptitle("图 B　θ 偏离训练值时的逐层响应：输入事件减少，深层反而增发",
                  fontsize=11, y=1.02)
@@ -239,10 +249,10 @@ def fig_c_negative_control(nf, mitbih_sum, out_png: Path, embedded: dict):
     ax.grid(alpha=0.25, ls=":")
     ax.legend(fontsize=8.5, loc="upper left", framealpha=0.9)
 
-    ax.text(0.985, 0.03,
+    ax.text(0.015, 0.035,
             f"MIT-BIH 判定：{str(mitbih_sum.get('verdict', '')).split('：')[0]}\n"
             f"该架构下输入率与隐藏层合计发放率同时单调下降 ⇒ 无对冲",
-            transform=ax.transAxes, fontsize=8, ha="right", va="bottom", color="#333",
+            transform=ax.transAxes, fontsize=8, ha="left", va="bottom", color="#333",
             bbox=dict(boxstyle="round,pad=0.4", fc="#eaf2f8", ec="#a9cce3"))
     r9._finish(fig, out_png, embedded, "figC")
 
@@ -275,7 +285,7 @@ def fig_d_encoder(ef, out_png: Path, embedded: dict):
     ax1.grid(alpha=0.25, ls=":")
     h1, l1 = ax1.get_legend_handles_labels()
     h2, l2 = ax1b.get_legend_handles_labels()
-    ax1.legend(h1 + h2, l1 + l2, fontsize=8, loc="center right")
+    ax1.legend(h1 + h2, l1 + l2, fontsize=8, loc="center left")
 
     tvr = [r["travel_over_tv"] for r in rows]
     ax2.plot(x, tvr, "-o", ms=5, lw=1.8, color=C_MAIN, label="可用总行程 ÷ 信号总变差")
@@ -453,13 +463,15 @@ def build_html(meta, verdicts, findings, embedded) -> str:
 {fl}
 
 <h2>六、必须写进论文的诚实边界</h2>
-<div class="finding warn"><h3>四条红线</h3>
+<div class="finding warn"><h3>五条红线</h3>
 <p>1. <b>MIT-BIH 未复现</b>非单调性，须如实报告，不得声称是普适规律。<br/>
 2. θ 扫描是 <b>zero-shot</b>（全部权重均以 θ=0.15 训练），不可写成「每个 θ 重训」。<br/>
 3. 能耗是<b>突触操作数估算</b>，非焦耳实测，须沿用上游措辞
 <code>a synaptic-operation count argument under published per-op energy constants,
 not a Joules measurement</code>。<br/>
-4. 实测发放率约 0.315，远高于 Yan et al.（IEEE TCAD）给出的 5.7% 门槛，须正面处理。</p></div>
+4. 实测发放率约 0.315，远高于 Yan et al.（IEEE TCAD）给出的 5.7% 门槛，须正面处理。<br/>
+5. 实测 6 个 STCNBlock 中 <b>block5 发放率恒为 0</b>（近死层，见图 B(a) 与图 F(a)），
+等效工作深度实为 5 层 ⇒ 其 SOP 贡献为 0（能耗账已按实际计），但「六层堆叠」的表述须修正。</p></div>
 
 <footer>由 <code>experiments/20_audit_figures.py</code> 生成 ·
 字体：{meta.get("font") or "未装载（中文可能显示为方框）"}</footer>
