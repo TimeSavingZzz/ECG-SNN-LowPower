@@ -326,6 +326,9 @@ def build_one(panel: str, html_path: Path, out_path: Path, bundle: dict):
     hard = []
     for pat in (r'src\s*=\s*"(?!data:)[^"]*\.js"',
                 r'href\s*=\s*"(?!data:)[^"]*\.css"',
+                # 只有**资源加载类**标签的外链才算硬泄漏；正文里的
+                # <a href="https://physionet.org/...">（数据出处引用）必须保留。
+                r'<(?:link|script|img|iframe|source|video|audio)\b[^>]*'
                 r'\b(?:src|href)\s*=\s*"https?://[^"]*"'):
         hard += [m2.group(0)[:70] for m2 in re.finditer(pat, txt)]
 
