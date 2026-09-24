@@ -8,7 +8,11 @@
    因此读不到 GPU 也不影响出图，可在 SNN 还没跑满时先出一版。
 2. **自包含**：图片以 base64 内嵌进单个 ``report.html``，不含任何外链，
    回传到本机后用浏览器 ``file://`` 打开即可完整显示（答辩现场零依赖兜底）。
-3. **图内文字用英文**：容器没有 CJK 字体，中文会渲染成豆腐块；HTML 正文仍用中文。
+3. **图内文字中文**：论文要求图表中文，故本脚本自己装 CJK 字体（见 :func:`setup_cjk_font`）。
+   **必须用「回退列表」而非单一字体**：把 ``font.family`` 设成单个 CJK 字体时，
+   该字体的拉丁字形若不全，连 ``AUROC`` / 数字都会变豆腐块（实测 Droid Sans Fallback
+   的精简版就是这种，matplotlib 还会因同名而解析到它）。故配 ``[CJK, DejaVu Sans]``
+   让 matplotlib 逐字形回退。``_finish`` 里的缺字形检查是这件事的守门人。
 4. **NaN 必须洗掉**：上游 ``multilabel_metrics`` 对零支持类别写 ``float('nan')``，
    ``json.dumps`` 会输出**裸 NaN（非法 JSON）**，前端 ``r.json()`` 会整体抛错。
    本脚本读写一律经过 :func:`clean`，写出时 ``allow_nan=False``。
@@ -55,21 +59,8 @@ PTBXL_LABEL_CN = {
     "HYP": "心室肥大",
 }
 MITBIH_LABELS = ["N", "S", "V", "F", "Q"]
-# 图内一律用英文（容器无 CJK 字体，中文会渲染成豆腐块）；中文只出现在 HTML 正文里。
-PTBXL_LABEL_EN = {
-    "NORM": "Normal",
-    "MI": "MI",
-    "STTC": "ST/T change",
-    "CD": "Conduction",
-    "HYP": "Hypertrophy",
-}
-MITBIH_LABEL_EN = {
-    "N": "Normal",
-    "S": "Supravent.",
-    "V": "Ventricular",
-    "F": "Fusion",
-    "Q": "Unknown",
-}
+# 图内一律用中文（字体由 :func:`setup_cjk_font` 装载）。
+# 原有一份 PTBXL_LABEL_EN / MITBIH_LABEL_EN 映射，因改中文后无人引用已删除。
 MITBIH_LABEL_CN = {
     "N": "正常搏动",
     "S": "室上性异位",
@@ -79,6 +70,52 @@ MITBIH_LABEL_CN = {
 }
 
 WARNINGS: list[str] = []
+
+
+# --------------------------------------------------------------------------- #
+# 中文字体
+# --------------------------------------------------------------------------- #
+# 按优先级探测；第一个存在的即用。Noto Sans CJK SC 是我们自己下的（16 MB，
+# 放在 gitignore 掉的 third_party/fonts/ 下，容器重建后仍在 NFS 上）；
+# 后两个是系统自带，作为兜底。
+FONT_CANDIDATES = [
+    "/mnt/ECG-SNN-LowPower/third_party/fonts/NotoSansCJKsc-Regular.otf",
+    "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf",
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+]
+
+
+def setup_cjk_font(explicit: str | None = None) -> str | None:
+    """装中文字体，返回实际用的 family 名（失败返回 None）。
+
+    **关键是回退列表**。把 ``font.family`` 设成单一 CJK 字体时，只要该字体拉丁字形
+    不全，连 ``AUROC``、数字、负号都会变成豆腐块——容器里 ``DroidSansFallback.ttf``
+    有两种版本同名（精简版几乎无拉丁），matplotlib 会解析到错的那个，实测
+    ``Glyph 65 (A) missing``。所以设 ``font.sans-serif = [CJK, 'DejaVu Sans']``，
+    让 matplotlib 逐字形回退：汉字走 CJK，拉丁/数学符号走 DejaVu。
+    ``axes.unicode_minus=False`` 是为了让负号用 ASCII 减号而不是 U+2212。
+    """
+    import matplotlib.font_manager as fm
+
+    for cand in ([explicit] if explicit else []) + FONT_CANDIDATES:
+        p = Path(cand)
+        if not p.is_file():
+            continue
+        try:
+            fm.fontManager.addfont(str(p))
+            name = fm.FontProperties(fname=str(p)).get_name()
+        except Exception as e:                      # 字体损坏/格式不支持
+            WARNINGS.append(f"字体 {p} 加载失败：{type(e).__name__}: {e}")
+            continue
+        plt.rcParams["font.sans-serif"] = [name, "DejaVu Sans"]
+        plt.rcParams["font.family"] = "sans-serif"
+        plt.rcParams["axes.unicode_minus"] = False
+        print(f"  字体：{name}  ({p})", flush=True)
+        return name
+
+    WARNINGS.append("未找到可用的中文字体，图内中文会渲染成豆腐块；"
+                    f"候选路径：{FONT_CANDIDATES}")
+    return None
 
 
 # --------------------------------------------------------------------------- #
@@ -121,8 +158,8 @@ def mj(pj):
 def _finish(fig, out_png: Path, embedded: dict, key: str):
     """存 PNG 并把 base64 收进 embedded。
 
-    同时把 matplotlib 的「缺字形」警告升级成显式告警——容器没有 CJK 字体，
-    图里一旦混入中文就会渲染成豆腐块，必须当场发现而不是等看图时才发现。
+    把 matplotlib 的「缺字形」警告升级成显式告警：图内是中文，字体没生效时
+    汉字会渲染成豆腐块，必须当场发现而不是答辩时才发现。
     """
     import warnings
 
@@ -134,7 +171,8 @@ def _finish(fig, out_png: Path, embedded: dict, key: str):
     missing = {str(w.message).split("Glyph ")[-1].split(" ")[0]
                for w in caught if "missing from font" in str(w.message)}
     if missing:
-        WARNINGS.append(f"{out_png.name} 含 {len(missing)} 个缺失字形（图内不要用中文）："
+        WARNINGS.append(f"{out_png.name} 含 {len(missing)} 个缺失字形"
+                        f"（中文字体未生效？检查 setup_cjk_font 的候选路径）："
                         f"{sorted(missing)[:6]}")
     embedded[key] = base64.b64encode(out_png.read_bytes()).decode("ascii")
     print(f"  ✓ {out_png.name}", flush=True)
@@ -197,7 +235,7 @@ def fig_pareto(rows, pareto_pts, out_png, embedded):
         ax.scatter([mj(p["energy_pj_neuromorphic"]) for p in good + degen],
                    [p["macro_auroc"] for p in good + degen],
                    s=34, c="#9467bd", alpha=0.75, zorder=3,
-                   label=f"SNN sweep (θ×T_dense, n={len(good) + len(degen)})")
+                   label=f"SNN 扫描点（θ×T_dense，n={len(good) + len(degen)}）")
 
     for name in RUN_ORDER:
         r = next((r for r in rows if r["run_name"] == name), None)
@@ -219,14 +257,14 @@ def fig_pareto(rows, pareto_pts, out_png, embedded):
     cnn = next((r for r in rows if r["model"] == "cnn"), None)
     if cnn and cnn.get("macro_auroc"):
         ax.axhline(cnn["macro_auroc"], ls="--", lw=1.0, c="#1f77b4", alpha=0.7)
-        ax.annotate(f"CNN1D AUROC = {cnn['macro_auroc']:.4f}",
+        ax.annotate(f"CNN1D 宏平均 AUROC = {cnn['macro_auroc']:.4f}",
                     (0.02, cnn["macro_auroc"]), xycoords=("axes fraction", "data"),
                     fontsize=8, color="#1f77b4", va="bottom")
 
     ax.set_xscale("log")
-    ax.set_xlabel("Estimated inference energy per sample  (mJ, log scale)")
-    ax.set_ylabel("Test macro-AUROC")
-    ax.set_title("(a) SNN vs dense baselines — the energy gap", fontsize=10)
+    ax.set_xlabel("单样本推理能耗（毫焦，对数轴）")
+    ax.set_ylabel("测试集宏平均 AUROC")
+    ax.set_title("(a) SNN 与稠密基线：能耗差距", fontsize=10)
     ax.grid(alpha=0.3, which="both")
     ax.legend(fontsize=8, loc="lower right")
 
@@ -245,7 +283,7 @@ def fig_pareto(rows, pareto_pts, out_png, embedded):
                         s=34, marker="x", c="0.45", linewidths=1.2, zorder=4)
         # 退化点的说明放进图例：写成自由文本会横穿右下角的图例框
         ax2.scatter([], [], s=34, marker="x", c="0.45", linewidths=1.2,
-                    label=f"T_dense={DEGENERATE_T_DENSE}: degenerate (AUROC ≡ 0.5)")
+                    label=f"T_dense={DEGENERATE_T_DENSE}：输出退化（AUROC 恒为 0.5）")
         ax2.axhline(0.5, ls=":", lw=1.0, c="0.55")
 
         front = _pareto_front(pareto_pts)
@@ -254,56 +292,56 @@ def fig_pareto(rows, pareto_pts, out_png, embedded):
         if front:
             ax2.plot([f[0] * 1000 for f in front], [f[1] for f in front],
                      drawstyle="steps-post", c="black", lw=1.4, zorder=5,
-                     label=f"Pareto frontier (n={len(front)})")
+                     label=f"帕累托前沿（n={len(front)}）")
             be, by, bp = max(front, key=lambda f: f[1])
             ax2.scatter([be * 1000], [by], s=170, facecolors="none",
                         edgecolors="red", linewidths=1.7, zorder=6)
             # 基线点在**前沿之外**（同能耗还有 0.6863/0.6893 两点更高），
             # 所以只能从全量点集里找，不能在 front 里找——否则基线圆圈与数字会静默消失。
             base = next((p for p in good if p.get("is_baseline")), None)
-            rows_txt = [f"best  θ={bp['theta']:<5g}T_dense={bp['t_dense']:<3d}"
-                        f"AUROC {by:.4f} @ {be * 1000:.3f} µJ"]
+            # 不用 monospace：中文是全角、拉丁走的是 CJK 字体里的比例字形，
+            # 列宽根本对不齐（还会因 family=monospace 解析不到 CJK 而变豆腐块）。
+            rows_txt = [f"最优：θ={bp['theta']:g}，T_dense={bp['t_dense']} → "
+                        f"宏平均 AUROC {by:.4f} @ {be * 1000:.3f} 微焦"]
             if base:
                 bx = base["energy_pj_neuromorphic"] / 1e6
                 byy = base["macro_auroc"]
                 ax2.scatter([bx], [byy], s=170, facecolors="none",
                             edgecolors="blue", linewidths=1.7, zorder=6)
-                rows_txt.append(f"base  θ={base['theta']:<5g}"
-                                f"T_dense={base['t_dense']:<3d}"
-                                f"AUROC {byy:.4f} @ {bx:.3f} µJ")
+                rows_txt.append(f"基线：θ={base['theta']:g}，"
+                                f"T_dense={base['t_dense']} → "
+                                f"宏平均 AUROC {byy:.4f} @ {bx:.3f} 微焦")
                 delta_a = by - byy
                 delta_e = (be * 1000 - bx) / bx * 100
-                rows_txt.append(f"gain  {delta_a:+.4f} AUROC "
-                                f"({delta_a / byy * 100:+.2f}%) for "
-                                f"{delta_e:+.2f}% energy")
+                rows_txt.append(f"收益：AUROC {delta_a:+.4f}"
+                                f"（{delta_a / byy * 100:+.2f}%），"
+                                f"能耗仅 {delta_e:+.2f}%")
             ax2.text(0.015, 0.965, "\n".join(rows_txt), transform=ax2.transAxes,
-                     fontsize=7.5, va="top", ha="left", family="monospace",
+                     fontsize=7.5, va="top", ha="left",
                      bbox=dict(boxstyle="round,pad=0.35", fc="white", ec="0.6",
                                alpha=0.9), zorder=7)
         sm = plt.cm.ScalarMappable(norm=norm, cmap=cmap)
         sm.set_array([])
         cb = fig.colorbar(sm, ax=ax2, pad=0.02, fraction=0.045)
-        cb.set_label("θ  (Δ-encoding threshold)", fontsize=8)
+        cb.set_label("θ（Δ 调制编码阈值）", fontsize=8)
         cb.ax.tick_params(labelsize=7)
         ax2.legend(fontsize=7.5, loc="lower right")
 
-    ax2.set_xlabel("Estimated inference energy per sample  (µJ, linear scale)")
-    ax2.set_ylabel("Test macro-AUROC")
-    ax2.set_title("(b) Inside the SNN cloud — the θ × T_dense trade-off", fontsize=10)
+    ax2.set_xlabel("单样本推理能耗（微焦，线性轴）")
+    ax2.set_ylabel("测试集宏平均 AUROC")
+    ax2.set_title("(b) SNN 扫描云内部：θ × T_dense 的权衡", fontsize=10)
     ax2.grid(alpha=0.3)
 
     fig.text(0.5, -0.015,
-             "Energy = measured synaptic-operation count x published per-op constants "
-             "(3.7 pJ/MAC dense, 0.1 pJ/SOP neuromorphic). NOT a Joules measurement. "
-             "Marker size in (b) ∝ T_dense.",
+             "能耗 = 实测突触操作数 × 已发表单算子能耗常量（稠密 FP32 MAC 3.7 pJ，"
+             "神经形态 SOP 0.1 pJ）。属估算，非焦耳实测。(b) 中点的大小 ∝ T_dense。",
              ha="center", fontsize=7, color="#555")
     # 扫描点与彩色点可能来自**不同权重**：训练会持续刷新 results/repro_snn/best.pt，
     # 而扫描绑定的是冻结快照（_snapshot_best.pt），彩色点则读 comparison.json。
     # 不写明来源，读者会误以为「官方 SNN 还不如它自己的扫描点」。
     fig.text(0.5, -0.06,
-             "Sweep points use a frozen checkpoint snapshot (results/pareto/_snapshot_best.pt, "
-             "checkpoint_md5 recorded per point); the filled SNN marker comes from "
-             "comparison.json and may correspond to a different checkpoint.",
+             "扫描点绑定冻结的权重快照（results/pareto/_snapshot_best.pt，逐点记录 "
+             "checkpoint_md5）；实心 SNN 圆点来自 comparison.json，可能对应另一份检查点。",
              ha="center", fontsize=7, color="#555")
     _finish(fig, out_png, embedded, "fig1")
 
@@ -322,23 +360,23 @@ def fig_layer_energy(sparsity, out_png, embedded):
     fig, ax = plt.subplots(figsize=(7.6, 4.4))
     x = np.arange(len(names))
     w = 0.38
-    ax.bar(x - w / 2, dense, w, label="Dense ops (FP32 MAC)", color="#1f77b4")
-    ax.bar(x + w / 2, snn, w, label="Spiking ops (SOP)", color="#d62728")
+    ax.bar(x - w / 2, dense, w, label="稠密操作数（FP32 MAC）", color="#1f77b4")
+    ax.bar(x + w / 2, snn, w, label="脉冲操作数（SOP）", color="#d62728")
     ax.set_yscale("log")
     ax.set_xticks(x)
-    ax.set_xticklabels([f"{n}\nr={r:.3f}" for n, r in zip(names, rates)], fontsize=8)
-    ax.set_ylabel("Operation count (log)")
+    ax.set_xticklabels([f"{n}\n发放率={r:.3f}" for n, r in zip(names, rates)], fontsize=8)
+    ax.set_ylabel("操作数（对数轴）")
     tot_d, tot_s = sparsity.get("total_ann_ops"), sparsity.get("total_snn_ops")
-    ax.set_title("Per-layer operation budget, MIT-BIH branch  "
-                 f"(total ratio {sparsity.get('energy_ratio_ann_over_snn', 0):.1f}x)")
+    ax.set_title("逐层操作数账（MIT-BIH 分支）  "
+                 f"总比值 {sparsity.get('energy_ratio_ann_over_snn', 0):.1f}×")
     ax.grid(alpha=0.3, axis="y", which="both")
     ax.legend(fontsize=8)
     for xi, (d, s) in enumerate(zip(dense, snn)):
         ax.text(xi - w / 2, d * 1.25, f"{d:,}", ha="center", fontsize=6.5)
         ax.text(xi + w / 2, s * 1.25, f"{s:,.0f}", ha="center", fontsize=6.5)
     fig.text(0.5, -0.06,
-             f"total dense={tot_d:,.0f} vs total spiking={tot_s:,.0f} "
-             "-> spike sparsity is the entire energy argument.",
+             f"稠密总计 {tot_d:,.0f} vs 脉冲总计 {tot_s:,.0f}"
+             "——脉冲稀疏性就是全部能耗论据的来源。",
              ha="center", fontsize=7, color="#555")
     _finish(fig, out_png, embedded, "fig2")
 
@@ -366,7 +404,9 @@ def fig_roc_pr(rows, out_png, embedded):
         for lbl in PTBXL_LABELS:
             if lbl in roc and roc[lbl].get("fpr"):
                 axes[0].plot(roc[lbl]["fpr"], roc[lbl]["tpr"], lw=lw, ls=ls,
-                             color=cls_color[lbl], label=lbl if name == "repro_snn" else None)
+                             color=cls_color[lbl],
+                             label=PTBXL_LABEL_CN.get(lbl, lbl)
+                             if name == "repro_snn" else None)
                 plotted = True
             if lbl in pr and pr[lbl].get("recall"):
                 axes[1].plot(pr[lbl]["recall"], pr[lbl]["precision"], lw=lw, ls=ls,
@@ -377,19 +417,19 @@ def fig_roc_pr(rows, out_png, embedded):
         return
 
     axes[0].plot([0, 1], [0, 1], "k:", lw=0.8, alpha=0.5)
-    axes[0].set(xlabel="False positive rate", ylabel="True positive rate",
-                title="ROC per superclass (PTB-XL, fold 10)")
-    axes[1].set(xlabel="Recall", ylabel="Precision",
-                title="Precision–Recall per superclass")
+    axes[0].set(xlabel="假阳性率", ylabel="真阳性率",
+                title="各超类 ROC 曲线（PTB-XL，第 10 折）")
+    axes[1].set(xlabel="召回率", ylabel="精确率",
+                title="各超类 PR 曲线")
     for a in axes:
         a.grid(alpha=0.3)
     # 类别图例只挂在 ROC 面板（有 label 的曲线都在那里）
-    axes[0].legend(fontsize=8, ncol=2, title="superclass", title_fontsize=8)
+    axes[0].legend(fontsize=8, ncol=2, title="超类", title_fontsize=8)
     # 模型图例用线型表达
     model_handles = [plt.Line2D([], [], color="#333", lw=1.7, ls=style[n][0],
                                 label=DISPLAY.get(n, n)) for n in RUN_ORDER]
     fig.legend(handles=model_handles, loc="lower center", ncol=3, fontsize=8.5,
-               frameon=False, bbox_to_anchor=(0.5, -0.06), title="line style = model",
+               frameon=False, bbox_to_anchor=(0.5, -0.06), title="线型 = 模型",
                title_fontsize=8)
     _finish(fig, out_png, embedded, "fig3")
 
@@ -405,17 +445,18 @@ def fig_confusion(mit_summary, out_png, embedded):
     fig, axes = plt.subplots(1, 2, figsize=(11.5, 4.6),
                              gridspec_kw={"width_ratios": [1.05, 1]})
     im = axes[0].imshow(row, cmap="Blues", vmin=0, vmax=1)
+    mit_tick_cn = [f"{c}（{MITBIH_LABEL_CN.get(c, '')}）" for c in MITBIH_LABELS]
     axes[0].set_xticks(range(5))
-    axes[0].set_xticklabels(MITBIH_LABELS)
+    axes[0].set_xticklabels(mit_tick_cn, fontsize=8)
     axes[0].set_yticks(range(5))
-    axes[0].set_yticklabels(MITBIH_LABELS)
-    axes[0].set(xlabel="Predicted", ylabel="True",
-                title="MIT-BIH confusion, row-normalised (n=49,692 beats)")
+    axes[0].set_yticklabels(mit_tick_cn, fontsize=8)
+    axes[0].set(xlabel="预测", ylabel="真值",
+                title="MIT-BIH 混淆矩阵，按行归一化（n=49,692 拍）")
     for i in range(5):
         for j in range(5):
             axes[0].text(j, i, f"{row[i, j] * 100:.1f}", ha="center", va="center",
                          fontsize=8, color="white" if row[i, j] > 0.55 else "black")
-    fig.colorbar(im, ax=axes[0], fraction=0.046, label="recall fraction")
+    fig.colorbar(im, ax=axes[0], fraction=0.046, label="召回比例")
 
     f1 = (mit_summary or {}).get("per_class_f1") or {}
     sup = (mit_summary or {}).get("per_class_support") or {}
@@ -424,10 +465,10 @@ def fig_confusion(mit_summary, out_png, embedded):
         vals = [f1.get(c, 0) or 0 for c in MITBIH_LABELS]
         axes[1].barh(y, vals, color="#d62728", alpha=0.85)
         axes[1].set_yticks(y)
-        axes[1].set_yticklabels([f"{c} ({MITBIH_LABEL_EN.get(c, '')})" for c in MITBIH_LABELS])
+        axes[1].set_yticklabels(mit_tick_cn, fontsize=8)
         axes[1].invert_yaxis()
-        axes[1].set(xlabel="F1", title="Per-class F1 (macro-F1 = "
-                    f"{mit_summary.get('macro_f1', 0):.4f})")
+        axes[1].set(xlabel="F1 值", title="逐类 F1（宏平均 F1 = "
+                    f"{mit_summary.get('macro_f1', 0):.4f}）")
         axes[1].grid(alpha=0.3, axis="x")
         for yi, c in enumerate(MITBIH_LABELS):
             axes[1].text(vals[yi] + 0.01, yi, f"{vals[yi]:.3f}  n={sup.get(c, 0)}",
@@ -453,10 +494,10 @@ def fig_strip(strip, out_png, embedded):
     fig, axes = plt.subplots(4, 1, figsize=(9.0, 6.4), sharex=True,
                              gridspec_kw={"height_ratios": [2.2, 1, 1, 1]})
     axes[0].plot(ecg, lw=1.0, color="#222")
-    axes[0].set_ylabel("amplitude")
-    axes[0].set_title(f"MIT-BIH record {strip.get('record')} beat #1 — "
-                      f"true={b.get('true')} pred={b.get('pred')}  "
-                      f"(input {len(ecg)} samples)")
+    axes[0].set_ylabel("幅值")
+    axes[0].set_title(f"MIT-BIH 记录 {strip.get('record')} 第 1 拍 —— "
+                      f"真值={b.get('true')}  预测={b.get('pred')}  "
+                      f"（输入 {len(ecg)} 个采样点）")
     axes[0].grid(alpha=0.3)
 
     # 输入脉冲：ON 画在上半、OFF 画在下半，避免两者叠在一起分不清
@@ -465,11 +506,11 @@ def fig_strip(strip, out_png, embedded):
             axes[1].vlines(data, lo, hi, color=col, lw=0.9)
     axes[1].set_yticks([0.24, 0.76])
     axes[1].set_yticklabels(["OFF", "ON"], fontsize=7)
-    axes[1].set_ylabel("Δ-spikes", fontsize=8)
+    axes[1].set_ylabel("Δ 编码脉冲", fontsize=8)
     axes[1].grid(alpha=0.25)
 
-    for ax, data, col, lab in ((axes[2], l3, "#d62728", "raster L3"),
-                               (axes[3], l4, "#9467bd", "raster L4")):
+    for ax, data, col, lab in ((axes[2], l3, "#d62728", "L3 脉冲栅格"),
+                               (axes[3], l4, "#9467bd", "L4 脉冲栅格")):
         if data.size == 0:
             continue
         if data.ndim == 1:
@@ -478,8 +519,8 @@ def fig_strip(strip, out_png, embedded):
             ax.scatter(data[:, 1], data[:, 0], s=3.5, c=col, marker=".")
         ax.set_ylabel(lab, fontsize=8)
         ax.grid(alpha=0.25)
-    axes[3].set_xlabel("time step (Δ-modulation quantum index)")
-    fig.suptitle("Spike encoding and hidden-layer activity for one beat", fontsize=10)
+    axes[3].set_xlabel("时间步（Δ 调制量子索引）")
+    fig.suptitle("单个心拍的脉冲编码与隐藏层活动", fontsize=10)
     _finish(fig, out_png, embedded, "fig5")
 
 
@@ -502,9 +543,9 @@ def fig_training(history_all, out_png, embedded):
         best = h.get("best_macro_auroc", h.get("best_macro_f1"))
         if best is not None:
             axes[1].axhline(best, ls=":", lw=0.8, color=COLORS.get(name, None), alpha=0.6)
-    axes[0].set(xlabel="epoch", ylabel="train loss", title="Training loss")
-    axes[1].set(xlabel="epoch", ylabel="validation metric",
-                title="Validation AUROC (PTB-XL) / macro-F1 (MIT-BIH)")
+    axes[0].set(xlabel="训练轮次", ylabel="训练损失", title="训练损失曲线")
+    axes[1].set(xlabel="训练轮次", ylabel="验证指标",
+                title="验证集 AUROC（PTB-XL）/ 宏平均 F1（MIT-BIH）")
     for a in axes:
         a.grid(alpha=0.3)
         a.legend(fontsize=8)
@@ -536,10 +577,11 @@ def fig_per_class(comp_rows, test_metrics, out_png, embedded):
         WARNINGS.append("无逐类 AUROC，跳过图 7")
         return
     ax.set_xticks(x)
-    ax.set_xticklabels([f"{l}\n{PTBXL_LABEL_EN.get(l, '')}" for l in PTBXL_LABELS], fontsize=8.5)
+    ax.set_xticklabels([f"{l}\n{PTBXL_LABEL_CN.get(l, '')}" for l in PTBXL_LABELS],
+                       fontsize=8.5)
     ax.set_ylabel("AUROC")
     ax.set_ylim(0.5, 1.0)
-    ax.set_title("Per-superclass AUROC on PTB-XL test set (fold 10)")
+    ax.set_title("PTB-XL 测试集逐超类 AUROC（第 10 折）")
     ax.grid(alpha=0.3, axis="y")
     ax.legend(fontsize=8.5, loc="lower right")
     _finish(fig, out_png, embedded, "fig7")
@@ -728,7 +770,13 @@ def main() -> None:
     ap.add_argument("--out", default="/mnt/ECG-SNN-LowPower/results/report")
     ap.add_argument("--mitbih-dir", default="", help="默认 <runs-root>/mitbih")
     ap.add_argument("--pareto-dir", default="", help="默认 <runs-root>/pareto")
+    ap.add_argument("--font", default="",
+                    help="中文字体路径；留空则按 FONT_CANDIDATES 依次探测")
     args = ap.parse_args()
+
+    # 必须在任何出图之前装字体（rcParams 是全局的），否则图内汉字变豆腐块
+    print("配置字体 …", flush=True)
+    setup_cjk_font(args.font or None)
 
     runs_root = Path(args.runs_root)
     out = Path(args.out)
