@@ -1,0 +1,29 @@
+# ---- 数据集与派生缓存（禁止提交大文件）----
+dataset/
+data/
+*.npy
+*.npz
+*.pkl
+*.dat
+*.hea
+*.pt
+*.pth
+*.ckpt
+
+# ---- 第三方上游代码副本（clone 进来，不作为本仓库内容）----
+third_party/
+
+# ---- 7 月遗留实验产物 ----
+legacy_july/
+
+# ---- 运行产物 ----
+runs/
+results/
+logs/
+*.log
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+.venv/
