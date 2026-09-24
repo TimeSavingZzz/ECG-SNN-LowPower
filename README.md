@@ -166,13 +166,66 @@ MSYS_NO_PATHCONV=1 python remote_fetch.py get \
     "C:/迅雷下载/实验/ECG-SNN-LowPower/results/report.html"
 ```
 
-### 2. 现场可交互 demo（两个面板）
+### 2. 中文化（`experiments/12_localize_web.py`）
+
+上游前端是英文。译文放在**受版本控制的脚本内的对照表**里（不是一次性手工编辑），
+输出到被 gitignore 的 `results/web_cn/` 与 `results/mitbih/web_cn/`：
+
+```bash
+python3 experiments/12_localize_web.py                 # 两个面板
+python3 experiments/12_localize_web.py --check-only    # 只校验上游原文有无漂移
+```
+
+匹配用**空白弹性正则**（词间允许任意空白），故上游 HTML 的换行/缩进变化不会导致失配；
+一旦上游改了原文，`--check-only` 报「未命中」并返回非零。当前 234 条译文全命中。
+
+字体走 CSS 变量补丁（`:root` 的 `--font`/`--mono` 补 CJK 回退链），不逐个选择器覆盖。
+MIT-BIH 的 5 类中文名用 JS 侧 `CLASS_CN` 覆盖映射，**不改** `inference.json`
+（它由 `evaluate.py` 生成，保持数据可复现）。
+
+### 3. 答辩离线包（`experiments/13_build_offline_demo.py`）—— **现场主推**
+
+把面板 HTML/CSS/JS 与预置样本的推理结果全部内联成**单文件 HTML**，拷回本机后
+`file://` 双击即开：零网络、零服务、点样本**瞬时**切换，会场断网也不影响。
+
+```bash
+# 容器内（需 10_serve_demo.py 已在 8000 运行）
+PY=/opt/miniconda3/envs/shadocformer/bin/python
+nohup $PY experiments/13_build_offline_demo.py --all > logs/offline_build.log 2>&1 &
+# 之后只重打包、不重收数据：
+$PY experiments/13_build_offline_demo.py --build
+```
+
+产出 `results/offline/ptbxl_demo.html`（2.7 MB，预置 17 个样本）与
+`mitbih_demo.html`（0.54 MB）。
+
+**原理**：在 `app.js` **之前**注入一个 `window.fetch` 拦截器，按 URL 从内联的
+`window.__BUNDLE__` 取数并返回 `new Response(...)`；前端 `jget()`/`r.json()`
+察觉不到差别，**上游 `app.js` 零改动**。PTB-XL 需预跑推理（`--collect` 连 shim 收
+`/examples` 里全部样本），MIT-BIH 本就纯静态、扫 `app.js` 里的字面量路径内联即可。
+
+`ecg` 降到 4 位小数（屏幕一像素约 2e-3，1e-4 分辨率不可见），
+`probs`/`spike_rates`/`compare_probs`/`macs`/`sops` 等**数值口径一个字节不动**；
+并剔除 Google Fonts 三条外链（避免现场「有网但慢」时白屏等待）。
+生成后自检：`<link|script|img>` 的外链必须为 0，`fetch` 去向逐个核对是否已被覆盖。
+
+回传本机：
+
+```bash
+cd C:/Users/dj/remote-docker-project
+MSYS_NO_PATHCONV=1 python remote_fetch.py get \
+    /mnt/ECG-SNN-LowPower/results/offline/ptbxl_demo.html \
+    "C:/迅雷下载/实验/ECG-SNN-LowPower/results/offline/ptbxl_demo.html"
+```
+
+### 4. 联网实时 demo（备选）
 
 ```bash
 # 容器内：PTB-XL 主线（上游 web/ 前端 + stdlib 后端替身）
-CUDA_VISIBLE_DEVICES=3 nohup python experiments/10_serve_demo.py --port 8000 > logs/web.log 2>&1 &
-# 容器内：MIT-BIH（纯静态，工作副本 results/mitbih/web_live/）
-cd results/mitbih/web_live && nohup python -m http.server 8001 --bind 0.0.0.0 &
+CUDA_VISIBLE_DEVICES=3 nohup python experiments/10_serve_demo.py --port 8000 \
+    --web results/web_cn > logs/web.log 2>&1 &
+# 容器内：MIT-BIH（纯静态，中文副本 results/mitbih/web_cn/）
+cd results/mitbih/web_cn && nohup python -m http.server 8001 --bind 0.0.0.0 &
 
 # 本机：两条转发（通道工具，属允许在本机运行的一类）
 python "C:/Users/dj/.claude/scripts/remote-forward.py"
@@ -182,8 +235,19 @@ python "C:/Users/dj/.claude/scripts/remote-forward.py" --remote-port 8001 --loca
 浏览器打开 **`http://127.0.0.1:8000`**（PTB-XL：三模型对比 + 4 张脉冲可视化 + 上传推理）
 与 **`http://127.0.0.1:8001`**（MIT-BIH：逐拍诊断 + 混淆矩阵 + 逐层能耗账）。
 
-⚠️ 首次点开某样本约 **50 s**（要加载 SNN+CNN+ResNet 三份检查点并收集脉冲 traces），
-之后约 3 s。演示前先点一个样本热身。
+⚠️ **实测延迟（2026-09-24，同一样本 `ecg_id=9`，响应 331411 B）**：
+
+| 位置 | 耗时 | 吞吐 |
+|---|---|---|
+| 容器内自连（urllib） | **1.76 s** | 188 KB/s |
+| 经隧道（本机 curl） | **47.6 s** | 6.9 KB/s |
+
+⇒ 推理本身只要 1.76 秒，**慢出来的 27 倍全在四跳链路搬字节**，而且**每次点击都是这个数**
+——早先 README 写的「首次约 50 s、之后约 3 s」**是错的，已实测推翻**（实测三次：
+59.9 s / 45.7 s / 47.6 s）。响应体积里 `ecg`(12×1000 浮点) 占 76.9%、
+`input_spikes` 占 22.3%，两项即 99.2%；gzip 只压得动 4.6:1，救不回来。
+
+**所以现场演示走第 3 节的离线包，不要依赖这条链路。** 本节仅作联网时的备选。
 
 **为什么必须有后端替身**：上游 `scripts/serve.sh`（`cd web && python3 -m http.server`）
 **是失效脚本**——根 `web/index.html` 用**绝对路径** `/static/{style.css,app.js}`，
