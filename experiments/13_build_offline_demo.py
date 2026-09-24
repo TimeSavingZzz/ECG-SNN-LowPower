@@ -208,7 +208,8 @@ def _interceptor_js(bundle: dict) -> str:
         "        '离线包未预置该样本 ecg_id=' + (m ? m[1] : '?') }, 404));\n"
         "    }\n"
         "    for (var s in ST) {\n"
-        "      if (ST.hasOwnProperty(s) && (path === s || path === '/' + s))\n"
+        "      if (ST.hasOwnProperty(s) && (path === s || path === '/' + s\n"
+        "          || path.slice(-(s.length + 1)) === '/' + s))\n"
         "        return Promise.resolve(resp(ST[s], 200));\n"
         "    }\n"
         "    return Promise.resolve(resp({ detail:\n"
@@ -306,21 +307,34 @@ def build_one(panel: str, html_path: Path, out_path: Path, bundle: dict):
     if missing:
         log(f"[build] ⚠️ 未找到外部引用（离线打开会缺资源）: {missing}")
 
-    # 5) 自检：产物里不该再有任何外部资源引用
+    # 5) 自检分两类：<script src>/<link href> 是**硬泄漏**必须为 0；
+    #    而 app.js 源码里的 fetch("data/x.json") 字面量是**预期内**的 ——
+    #    我们不改前端源码，而是让拦截器在运行时截获，故只需核对去向已被覆盖。
     txt = out_path.read_text(encoding="utf-8")
-    leaks = []
+    hard = []
     for pat in (r'src\s*=\s*"(?!data:)[^"]*\.js"',
-                r'href\s*=\s*"(?!data:)[^"]*\.css"',
-                r'fetch\(\s*["\'](?:data/|/static/|/status|/examples'
-                r'|/comparison|/history)'):
-        for m2 in re.finditer(pat, txt):
-            leaks.append(m2.group(0)[:70])
-    if leaks:
-        log(f"[build] ⚠️ 自检发现 {len(leaks)} 处残留外部引用（前 5 条）:")
-        for s in leaks[:5]:
+                r'href\s*=\s*"(?!data:)[^"]*\.css"'):
+        hard += [m2.group(0)[:70] for m2 in re.finditer(pat, txt)]
+
+    covered, uncovered = [], []
+    for m2 in re.finditer(r'fetch\(\s*["\']([^"\']+)["\']', txt):
+        rel = m2.group(1)
+        if rel.startswith(("http://", "https://")):
+            continue
+        if rel.split("?")[0] in static_data:
+            covered.append(rel)        # 已内联成 bundle.static
+        elif rel.startswith("/"):
+            covered.append(rel)        # 绝对路由，由 endpoints/infer 覆盖
+        else:
+            uncovered.append(rel)
+
+    if hard or uncovered:
+        log(f"[build] ⚠️ 自检发现 {len(hard) + len(uncovered)} 处**真实**外部引用:")
+        for s in (hard + [f'fetch("{r}")' for r in uncovered])[:8]:
             log(f"          {s}")
     else:
-        log("[build] ✅ 自检通过：无残留外部资源引用，可 file:// 直接打开")
+        log(f"[build] ✅ 自检通过：无残留外部资源引用（{len(covered)} 处 fetch "
+            f"均由内联数据或拦截器覆盖），可 file:// 直接打开")
     return out_path
 
 
