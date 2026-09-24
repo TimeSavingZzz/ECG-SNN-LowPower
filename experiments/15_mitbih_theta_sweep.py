@@ -54,6 +54,8 @@ NC = Path("/mnt/ECG-SNN-LowPower/third_party/neurocardio")
 MITBIH = NC / "archive" / "cardiospike_mitbih"
 sys.path.insert(0, str(NC))
 sys.path.insert(0, str(MITBIH))
+# evaluate.py 位于 MITBIH/src/ 下（顶层模块，不带包前缀），必须单独把 src 加进来
+sys.path.insert(0, str(MITBIH / "src"))
 
 from src.encoding import delta_encode_batch  # noqa: E402
 from src.model import CardioSpikeSNN  # noqa: E402
