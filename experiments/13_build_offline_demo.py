@@ -75,6 +75,8 @@ ROOT = Path("/mnt/ECG-SNN-LowPower")
 
 # 前端请求的 URL 里可能带版本号/查询串，匹配时统统剥掉再看路径。
 _CSS_LINK = re.compile(r'<link\b[^>]*href\s*=\s*"([^"]*\.css[^"]*)"[^>]*>', re.I)
+# 指向外网的 <link>（上游 index.html:7-9 的 Google Fonts 三条）
+_REMOTE_LINK = re.compile(r'<link\b[^>]*href\s*=\s*"https?://[^"]*"[^>]*>', re.I)
 _JS_SRC = re.compile(r'<script\b[^>]*src\s*=\s*"([^"]+)"[^>]*>\s*</script>', re.I)
 # 只扫字面量 fetch("...") / fetch('...')，够用且不会误伤模板拼接的 URL。
 _FETCH_LIT = re.compile(r"""fetch\(\s*["'`]([^"'`]+)["'`]\s*\)""")
@@ -235,6 +237,16 @@ def build_one(panel: str, html_path: Path, out_path: Path, bundle: dict):
     inlined: list[str] = []
     missing: list[str] = []
 
+    # 0) 先剔除指向外网的 <link>（上游 index.html:7-9 的 Google Fonts 三条）。
+    #    本包要的是「零依赖、双击即开」：现场若**有网但慢**，浏览器会为了等
+    #    fonts.googleapis.com 而白屏数秒；无网则静默回退。而本地化时已把
+    #    Microsoft YaHei / PingFang SC / Noto Sans CJK 补进 CSS 的 --font 回退链，
+    #    故删外链只影响字形美观，不影响任何正确性。
+    dropped = _REMOTE_LINK.findall(html)
+    if dropped:
+        html = _REMOTE_LINK.sub("", html)
+        log(f"  [build] 剔除 {len(dropped)} 条外网 <link>（离线包不依赖网络）")
+
     # 1) CSS
     def _css(m):
         href = m.group(1)
@@ -313,7 +325,8 @@ def build_one(panel: str, html_path: Path, out_path: Path, bundle: dict):
     txt = out_path.read_text(encoding="utf-8")
     hard = []
     for pat in (r'src\s*=\s*"(?!data:)[^"]*\.js"',
-                r'href\s*=\s*"(?!data:)[^"]*\.css"'):
+                r'href\s*=\s*"(?!data:)[^"]*\.css"',
+                r'\b(?:src|href)\s*=\s*"https?://[^"]*"'):
         hard += [m2.group(0)[:70] for m2 in re.finditer(pat, txt)]
 
     covered, uncovered = [], []
