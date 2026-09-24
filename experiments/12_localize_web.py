@@ -570,10 +570,10 @@ PTBXL_JS = [
      '$("runHint").textContent="推理中…"; $("runBtn").disabled=true;'),
     ('$("runHint").textContent="uploading…"; $("runBtn").disabled=true;',
      '$("runHint").textContent="上传中…"; $("runBtn").disabled=true;'),
+    # 只写一条即可 —— 模式是空白弹性的，缩进版与顶格版是同一个模式，
+    # 写两条会让第二条命中 0 次而被误报为「未命中」。
     ('$("runHint").textContent=`error: ${e.message}`;',
      '$("runHint").textContent=`错误：${e.message}`;'),
-    ('    $("runHint").textContent=`error: ${e.message}`;',
-     '    $("runHint").textContent=`错误：${e.message}`;'),
 
     # ── 训练曲线图例与元信息 ──
     ('{col:"#48cae4", label:"macro AUROC", dash:false},', '{col:"#48cae4", label:"宏平均 AUROC", dash:false},'),
@@ -753,9 +753,9 @@ MITBIH_JS = [
     ('<span class="pred-tag" style="color:${CLASS_COLORS[winner] || \'#888\'}">model: ${winner}</span>',
      '<span class="pred-tag" style="color:${CLASS_COLORS[winner] || \'#888\'}">模型：${winner}</span>'),
 
-    ('`pred ${c}`', '`预测 ${c}`'),
+    ('>pred ${c}</div>', '>预测 ${c}</div>'),
     ('<div class="cm-cell cm-hdr">recall</div>', '<div class="cm-cell cm-hdr">召回率</div>'),
-    ('`true ${classes[i]}`', '`真实 ${classes[i]}`'),
+    ('>true ${classes[i]}</div>', '>真实 ${classes[i]}</div>'),
 
     ("""      `SNN cost is <strong>${SUMMARY.energy_ratio_ann_over_snn.toFixed(2)}×</strong> cheaper per beat than the dense baseline (mean hidden spike rate ${(SUMMARY.mean_hidden_spike_rate*100).toFixed(1)}%).`;""",
      """      `SNN 每心拍开销比稠密基线<strong>低 ${SUMMARY.energy_ratio_ann_over_snn.toFixed(2)} 倍</strong>（隐藏层平均发放率 ${(SUMMARY.mean_hidden_spike_rate*100).toFixed(1)}%）。`;"""),
@@ -803,6 +803,8 @@ ALLOW = {
     "style", "app", "data", "index", "px", "mV", "Hz", "ms", "µJ", "pJ", "pp", "Sigmoid",
     "sigmoid", "softmax", "ReLU", "BPTT", "NaN", "B", "T", "N", "S", "V", "F", "Q",
     "NeuroCardio", "CardioSpike", "S-TCN", "S", "TCN", "Chazal", "al",
+    # 品牌 / 厂商 / 平台名，属专有名词，有意保留英文
+    "Neuro", "Cardio", "Intel", "Apple", "Silicon", "Chip",
 }
 
 
@@ -832,13 +834,27 @@ def apply_table(text: str, pairs) -> tuple[str, list[str], int]:
     return text, missing, hits
 
 
+def _prose_like(s: str) -> bool:
+    """判断一个候选串是否「像给人读的英文句子」而非代码。
+
+    收紧到只留散文，是因为宽松匹配会刷出上百条元素 id、颜色值与模板插值
+    （``rgba(...)``、``ecgCanvas``、``${url} → HTTP ${r.status}``），
+    信噪比低到没人会看。散文的判据：至少两个词，且不含任何代码记号。
+    """
+    if any(ch in s for ch in "<>{}()=/;#$`\"'\\|&"):
+        return False
+    if len(s.split()) < 2:
+        return False
+    return bool(re.fullmatch(r"[A-Za-z0-9'’\- ,.\-—·%×µ!?…]+", s))
+
+
 def scan_leftover(text: str, kind: str) -> list[str]:
-    """扫出疑似残留英文（供人工确认，不判失败）。"""
+    """扫出疑似残留的英文散文（供人工确认，不判失败）。"""
     if kind == "html":
         body = re.sub(r"<!--.*?-->", " ", text, flags=re.S)
         body = re.sub(r"<(script|style)\b.*?</\1>", " ", body, flags=re.S | re.I)
         body = re.sub(r"<[^>]+>", " ", body)
-        cands = re.findall(r"[A-Za-z][A-Za-z'’\-]{3,}(?:\s+[A-Za-z][A-Za-z'’\-]{2,})+", body)
+        cands = re.findall(r"[A-Za-z][A-Za-z'’\-]{2,}(?:\s+[A-Za-z][A-Za-z'’\-]{2,})+", body)
     elif kind == "js":
         body = re.sub(r"/\*.*?\*/", " ", text, flags=re.S)
         body = re.sub(r"^\s*//.*$", " ", body, flags=re.M)
@@ -846,8 +862,8 @@ def scan_leftover(text: str, kind: str) -> list[str]:
         for lit in re.findall(r"\"(?:[^\"\\]|\\.)*\"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`", body):
             inner = lit[1:-1]
             if any("一" <= ch <= "鿿" for ch in inner):
-                continue
-            if re.search(r"^[#\d]", inner) or len(inner) < 6:
+                continue                     # 已含汉字，说明译过
+            if len(inner) < 6:
                 continue
             cands.append(inner)
     else:
@@ -855,10 +871,13 @@ def scan_leftover(text: str, kind: str) -> list[str]:
 
     out, seen = [], set()
     for c in cands:
-        toks = [t for t in re.split(r"[^A-Za-z'’\-]+", c) if len(t) >= 3 and t not in ALLOW]
+        c = re.sub(r"\s+", " ", c).strip()
+        if not _prose_like(c):
+            continue
+        toks = [t for t in re.split(r"[^A-Za-z'’\-]+", c)
+                if len(t) >= 2 and t not in ALLOW]
         if not toks:
             continue
-        c = re.sub(r"\s+", " ", c).strip()
         if c not in seen:
             seen.add(c)
             out.append(c)
