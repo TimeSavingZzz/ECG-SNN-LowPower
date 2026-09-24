@@ -27,3 +27,6 @@ __pycache__/
 *.py[cod]
 .ipynb_checkpoints/
 .venv/
+
+# ---- 参考文献 PDF（只本地留存，体积大且不属工程产物）----
+docs/refs/
