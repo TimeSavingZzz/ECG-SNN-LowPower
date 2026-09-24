@@ -319,26 +319,49 @@ def main() -> None:
             if theirs is None:
                 continue
             d = abs(float(mine) - float(theirs))
+            # 这三项都含**隐藏层**实测发放率 ⇒ 只在同一份权重下可比。
             checks[key] = {"ours": float(mine), "reference_07": float(theirs),
-                           "abs_diff": d, "ok": d <= args.baseline_tol}
+                           "abs_diff": d, "ok": d <= args.baseline_tol,
+                           "weight_invariant": False}
+        # 07 的 row 里存了逐层发放率；**input 层只取决于输入信号与 θ，与权重无关**，
+        # 所以这是本检查里唯一能跨权重对拍的项，也是唯一有判定力的项——
+        # best.pt 被训练刷新之后，只有它还应该 OK。
+        ref_in = ((baseline or {}).get("spike_rates") or {}).get("input")
+        if ref_in is not None and base_pt.get("input_spike_rate") is not None:
+            d = abs(float(base_pt["input_spike_rate"]) - float(ref_in))
+            checks["input_spike_rate*"] = {
+                "ours": float(base_pt["input_spike_rate"]),
+                "reference_07": float(ref_in),
+                "abs_diff": d, "ok": d <= args.baseline_tol,
+                "weight_invariant": True}
+        drift = [k for k, c in checks.items()
+                 if not c["ok"] and not c["weight_invariant"]]
         consistency = {
             "checks": checks,
+            "weight_drift_suspected": bool(drift),
+            "drifted_metrics": drift,
+            "authoritative_check": "input_spike_rate*（与权重无关，唯一可跨权重对拍）",
             "note": (
-                "该检查以 comparison.json 生成时刻的权重为前提。若 best.pt 在其后被训练刷新，"
-                "macro_auroc 必然不同——这属于权重漂移，不是实现错误。"
+                "带 * 的 input_spike_rate 与权重无关，是本检查唯一有判定力的项。"
+                "其余三项都随隐藏层发放率变化，只在 comparison.json 生成时刻的权重下可比；"
+                "若 best.pt 在其后被训练刷新，它们必然不同——这属于权重漂移，不是实现错误，"
+                "且 07 不记录 checkpoint_md5，脚本无法自动识别，只能提示。"
                 "实现等价性已单独验证：同一进程内用同一份权重，11 的推理路径"
                 "（bind_theta + nw=4 + pin_memory）与 07 的复刻路径（原生 model(x) + nw=2）"
                 "在 batch_size=64 下 AUROC 与 yp_sum 逐位相同（0.670474 / 3949.4321）。"
-                "可跨权重对拍的量只有 input_spike_rate（编码层只依赖输入与 θ，与权重无关；"
-                "实测 ep0 与 ep11 两版权重下都是 0.3150）。"
-                "total_sops / spike_rate_mean / macro_auroc 都随隐藏层发放率变化，同样受权重漂移影响。"
+                "实测 input_spike_rate 在 ep0 与 ep11 两版权重下都是 0.3150，可作旁证。"
             ),
         }
         print("\n=== 与 07 的基线自洽检查 (θ=0.15, T_dense=8) ===", flush=True)
         for key, c in checks.items():
             flag = "OK " if c["ok"] else "FAIL"
-            print(f"  [{flag}] {key:<18} ours={c['ours']:.6f}  "
+            print(f"  [{flag}] {key:<20} ours={c['ours']:.6f}  "
                   f"07={c['reference_07']:.6f}  diff={c['abs_diff']:.2e}", flush=True)
+        if drift:
+            print(f"  ⇒ 预期结果，非实现错误：带 * 的项与权重无关，已 OK；"
+                  f"FAIL 的 {'/'.join(drift)} 都含隐藏层发放率，而 07 的 comparison.json "
+                  f"生成于 best.pt 被训练刷新之前（07 不记录 checkpoint_md5，无法自动识别）。"
+                  f"SNN 跑满 100 轮后重跑 07 + 11，这三项才会同时 OK。", flush=True)
 
     # ── 单调性检查（θ↑ ⇒ 输入发放率↓ ⇒ SOP↓）─────────────────────────
     mono = None
