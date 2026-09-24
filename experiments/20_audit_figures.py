@@ -304,7 +304,7 @@ def fig_d_encoder(ef, out_png: Path, embedded: dict):
     ax2.set_ylim(0, 1.15)
     ax2.set_title("(b) 行程上限：`ref += ±θ` 每步最多移动一个量子", fontsize=9.5)
     ax2.grid(alpha=0.25, ls=":")
-    ax2.legend(fontsize=8, loc="upper left")
+    ax2.legend(fontsize=8, loc="center left")
 
     fig.suptitle("图 D　上游 docstring 称编码器「information-preserving」，实测不成立",
                  fontsize=11, y=1.02)
