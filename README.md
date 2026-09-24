@@ -13,7 +13,9 @@
 3. **完整可复现**：仓库自带数据下载/预处理、训练、评测、基线对比，以及作者提交的权重与指标 JSON（可直接对拍）。
 4. 附带 web 演示（`web/`、`modal_app/`），对应"系统怎么呈现"这一环节。
 
-## 参考指标（作者提交，待本机复现对拍）
+## 参考指标与实测对拍
+
+**作者提交值**（复现目标）：
 
 | 模型 | PTB-XL macro-AUROC | 参数 | 说明 |
 |---|---|---|---|
@@ -21,7 +23,34 @@
 | ResNet1D 基线 | 0.9017 | — | 稠密基线 |
 | CNN 基线 | ~0.90 | — | 稠密基线 |
 
-MIT-BIH 分支（`archive/cardiospike_mitbih/`）：Conv-LIF SNN ≈272k 参数，25 epoch，作者报告 accuracy **0.8683**、macro-F1 **0.4153**。
+**本机实测**（`results/comparison.json`，由 `07_energy_report.py` 产出）：
+
+| 模型 | PTB-XL macro-AUROC | 参数 | batch-1 延迟 | 估算能耗/次 | 对拍 |
+|---|---|---|---|---|---|
+| SNN（主线） | 训练中（100 轮未完） | 1,893,768 | **1343 ms** | — | 待跑满后重跑 07 |
+| CNN1D 基线 | **0.9039** | 1,741,381 | **1.90 ms** | 1.0901 mJ | 作者 0.9023 ✅ |
+| ResNet1D 基线 | **0.8967** | 1,879,685 | 2.03 ms | 0.1868 mJ | 作者 0.9017 ✅ |
+
+> ⚠️ **SNN 延迟 1343 ms vs CNN 1.90 ms（约 700×）是仿真环境的产物，不是架构劣势。**
+> 瓶颈是 Python 逐时间步循环模拟 LIF 膜电位，实测**单核跑满、GPU 空等**（`utime ≈ elapsed`，
+> 99 线程只有一个在忙）。在真正的神经形态芯片上 SNN 推理是亚毫秒级。论文若不正视这条，
+> 会被误读成"SNN 更慢"，与低功耗叙事自相矛盾。
+>
+> ⚠️ `comparison.json` 里的 SNN 行是**截断版**（训练中 best.pt 被反复刷新，07 读到的是早期权重），
+> 故其 AUROC 不代表最终水平。跑满 100 轮后由 `08` 自动重跑 07，以那份为准。
+
+**MIT-BIH 分支**（`archive/cardiospike_mitbih/`，Conv-LIF SNN ≈272k 参数，25 epoch）：
+
+| 指标 | 作者提交 | 本机实测 | 差值 |
+|---|---|---|---|
+| accuracy | 0.868329 | **0.870221** | +0.19 pp |
+| macro-F1 | 0.415321 | **0.426845** | +1.15 pp |
+| 能耗比（ANN/SNN 操作数） | 31.83× | **27.29×** | 我们的模型发放率略高 |
+
+> MIT-BIH 的能耗比**低于**作者（27.29× vs 31.83×），因为两者不是同一份权重——
+> 作者的 `models/cardiospike_best.pt` **从未提交**（`git ls-files` 显示 `models/` 下只跟踪
+> `rr_stats.npz`），我们的是自己训 25 轮的产物。逐层能耗账见
+> `results/mitbih/web_data/sparsity.json`（`total_snn_ops=129922` / `total_ann_ops=3545536`）。
 
 ### 关于训练时长（对拍时的重要发现）
 
@@ -117,6 +146,92 @@ SNN 训练时间长于单次墙钟，故把**续跑守护**也一起挂上（它
 nohup bash experiments/08_resume_snn_until_done.sh > logs/resume_snn.log 2>&1 &
 ```
 
+## 可视化与现场演示
+
+两半都是**容器内起服务 + 本机端口转发**（业务后端一律在容器内，遵守 CLAUDE.md 禁本地开发命令）。
+
+### 1. 离线静态报告（零依赖兜底，答辩最稳）
+
+```bash
+python3 experiments/09_make_report.py --runs-root results --out results/report
+```
+
+产出 7 张 PNG + **自包含 `report.html`**（图片 base64 内嵌、无任何外链）。回传本机后
+用浏览器 `file://` 打开即可完整显示，**不依赖网络、不依赖容器存活**：
+
+```bash
+cd C:/Users/dj/remote-docker-project
+MSYS_NO_PATHCONV=1 python remote_fetch.py get \
+    /mnt/ECG-SNN-LowPower/results/report/report.html \
+    "C:/迅雷下载/实验/ECG-SNN-LowPower/results/report.html"
+```
+
+### 2. 现场可交互 demo（两个面板）
+
+```bash
+# 容器内：PTB-XL 主线（上游 web/ 前端 + stdlib 后端替身）
+CUDA_VISIBLE_DEVICES=3 nohup python experiments/10_serve_demo.py --port 8000 > logs/web.log 2>&1 &
+# 容器内：MIT-BIH（纯静态，工作副本 results/mitbih/web_live/）
+cd results/mitbih/web_live && nohup python -m http.server 8001 --bind 0.0.0.0 &
+
+# 本机：两条转发（通道工具，属允许在本机运行的一类）
+python "C:/Users/dj/.claude/scripts/remote-forward.py"
+python "C:/Users/dj/.claude/scripts/remote-forward.py" --remote-port 8001 --local-port 8001
+```
+
+浏览器打开 **`http://127.0.0.1:8000`**（PTB-XL：三模型对比 + 4 张脉冲可视化 + 上传推理）
+与 **`http://127.0.0.1:8001`**（MIT-BIH：逐拍诊断 + 混淆矩阵 + 逐层能耗账）。
+
+⚠️ 首次点开某样本约 **50 s**（要加载 SNN+CNN+ResNet 三份检查点并收集脉冲 traces），
+之后约 3 s。演示前先点一个样本热身。
+
+**为什么必须有后端替身**：上游 `scripts/serve.sh`（`cd web && python3 -m http.server`）
+**是失效脚本**——根 `web/index.html` 用**绝对路径** `/static/{style.css,app.js}`，
+靠 Modal 的 `api.mount("/static", StaticFiles(directory="/web"))` 平铺映射才成立，
+纯静态托管会全部 404；且前端要调 7 个接口。`10_serve_demo.py` 用 stdlib `http.server`
+复刻了 `modal_app/app.py::web()` 的全部路由（含 `POST /infer_upload`）。
+MIT-BIH 面板才是真静态（相对路径 + 已提交 JSON），零代码即可跑。
+
+**MIT-BIH 面板用我们自己的数据**：上游 `archive/.../web/data/` 是作者的产物，**未被我们覆盖**；
+我们 25 轮的产物在 `results/mitbih/web_data/`。故建工作副本 `results/mitbih/web_live/`
+= 上游的 html/js/css + 我们的 4 个 JSON。这是「跑 MIT-BIH 前先复制到工作副本」约定的落地。
+
+## 已知上游缺陷（论文需如实说明）
+
+**LIF 膜电位跨 batch 残留**：`neurocardio/model.py` 的 `snn.Leaky.forward` 把传入的 `mem`
+存进 `self.mem`，且**只在 shape 不匹配时**才清零；`init_leaky()` 返回 `self.mem.clone()`
+⇒ 每个 batch 会继承上一个 batch 的终态膜电位。同一份权重、同一 θ/T_dense 下实测：
+
+| batch_size | macro-AUROC |
+|---|---|
+| 64 | **0.498530** |
+| 96 | **0.487912** |
+
+重跑逐位相同（确定性，非随机扰动）。⇒ 本工程评测一律固定 `batch_size=64`（`07`/`11` 已对齐），
+跨 batch_size 的数字不可比；演示后端因此把推理串行化（`10_serve_demo.py` 用同一把锁）。
+
+## 精度-能耗帕累托扫描（本工程自己的贡献）
+
+`experiments/11_pareto_sweep.py` 在 θ（编码阈值，6 点）× `T_dense`（头积分步数，5 点）= 30 个
+配置点上扫描，每点重跑 fold-10 全量推理 + 在 fold-9 上**重新标定**发放率（不能复用）：
+
+```bash
+CUDA_VISIBLE_DEVICES=3 nohup python experiments/11_pareto_sweep.py \
+    --ckpt results/pareto/_snapshot_best.pt --out results/pareto > logs/pareto_full.log 2>&1 &
+```
+
+⚠️ **学术诚信红线**：上游 `train.py:57` 的 `theta` 字段**全文只出现一次**，训练时
+`main()` 是 `model(x)`（不传 θ）⇒ **所有 checkpoint 都是 θ=0.15 训练的**。因此 θ 扫描是
+**零训练编码器迁移（zero-shot 灵敏度分析）**——精度下降同时含「编码失配」与「信息损失」
+两种效应，**不能**解释为"θ 的最优取值"，更**不能**写成"我们对每个 θ 重训了模型"。
+要分离二者需对每个 θ 重训 100 轮，成本不现实，明确列为未来工作。
+
+⚠️ **扫描必须绑定冻结的权重快照**：训练持续刷新 `results/repro_snn/best.pt`，30 个点若各自
+读一次就会横跨多份权重、不可比。故先冻结 `results/pareto/_snapshot_best.pt`，且每个点都记录
+`checkpoint_md5`/`checkpoint_epoch`/`checkpoint_path` 可溯源。
+
+结果自动并入静态报告（`09` 读 `results/pareto/*.json`，无需额外参数）。
+
 ## 进度
 
 - [x] 立项、选定上游工程
@@ -125,6 +240,10 @@ nohup bash experiments/08_resume_snn_until_done.sh > logs/resume_snn.log 2>&1 &
 - [x] 发现并修复 PTB-XL 残档（夸克搬运缺一半）
 - [x] PTB-XL 数据补齐（records100 齐备 21799）+ 全量缓存（21388 条带诊断标签，745 MB）
 - [x] PTB-XL CNN / ResNet 基线复现（100 轮）：CNN **0.9039** vs 作者 0.9023；ResNet **0.8967** vs 作者 0.9017
+- [x] MIT-BIH 分支复现（25 轮）：accuracy **0.870221** vs 作者 0.868329；macro-F1 **0.426845** vs 0.415321
+- [x] 上游只读底本复原；我们自己的 MIT-BIH 产物拷到 `results/mitbih/`（含 best.pt 与 25 轮 history）
+- [x] 静态报告 `09_make_report.py`：7 张 PNG + 自包含 `report.html`（含逐层能耗拆解）
+- [x] 现场 demo：`10_serve_demo.py`（PTB-XL 面板）+ MIT-BIH 静态面板 + 本机端口转发工具
+- [x] 精度-能耗帕累托扫描 `11_pareto_sweep.py`（θ × T_dense = 30 点，结果自动并入报告）
 - [ ] PTB-XL SNN 复现，与 0.8663 对拍（训练中，需续跑至 100 轮）
-- [ ] MIT-BIH 分支复现，与 0.8683 / 0.4153 对拍
-- [ ] 能耗对比表复现（`07_energy_report.py`，待 SNN 跑满后由 08 重跑）
+- [ ] 能耗对比表复现（`07_energy_report.py`，待 SNN 跑满后由 08 重跑，届时 SNN 行才是最终值）
