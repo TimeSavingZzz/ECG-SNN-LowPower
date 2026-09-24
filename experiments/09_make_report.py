@@ -189,6 +189,14 @@ def fig_pareto(rows, pareto_pts, out_png, embedded):
              "Energy = measured synaptic-operation count x published per-op constants "
              "(3.7 pJ/MAC dense, 0.1 pJ/SOP neuromorphic). NOT a Joules measurement.",
              ha="center", fontsize=7, color="#555")
+    # 扫描点与彩色点可能来自**不同权重**：训练会持续刷新 results/repro_snn/best.pt，
+    # 而扫描绑定的是冻结快照（_snapshot_best.pt），彩色点则读 comparison.json。
+    # 不写明来源，读者会误以为「官方 SNN 还不如它自己的扫描点」。
+    fig.text(0.5, -0.065,
+             "Sweep points use a frozen checkpoint snapshot (results/pareto/_snapshot_best.pt, "
+             "checkpoint_md5 recorded per point); the filled SNN marker comes from "
+             "comparison.json and may correspond to a different checkpoint.",
+             ha="center", fontsize=7, color="#555")
     _finish(fig, out_png, embedded, "fig1")
 
 
