@@ -329,7 +329,9 @@ def main() -> None:
                 "实现等价性已单独验证：同一进程内用同一份权重，11 的推理路径"
                 "（bind_theta + nw=4 + pin_memory）与 07 的复刻路径（原生 model(x) + nw=2）"
                 "在 batch_size=64 下 AUROC 与 yp_sum 逐位相同（0.670474 / 3949.4321）。"
-                "注意 total_sops / spike_rate_mean 两项不受权重漂移影响，仍可用于对拍。"
+                "可跨权重对拍的量只有 input_spike_rate（编码层只依赖输入与 θ，与权重无关；"
+                "实测 ep0 与 ep11 两版权重下都是 0.3150）。"
+                "total_sops / spike_rate_mean / macro_auroc 都随隐藏层发放率变化，同样受权重漂移影响。"
             ),
         }
         print("\n=== 与 07 的基线自洽检查 (θ=0.15, T_dense=8) ===", flush=True)
