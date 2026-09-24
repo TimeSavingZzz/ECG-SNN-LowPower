@@ -23,7 +23,8 @@ from neurocardio.data import PTBXLConfig, build_cache  # noqa: E402
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--root", default="/mnt/ptb-xl", help="PTB-XL 原始数据目录（固定位置）")
-    ap.add_argument("--out", default=str(NC / "data" / "ptbxl_cache"), help="缓存输出目录")
+    ap.add_argument("--out", default="/mnt/ECG-SNN-LowPower/results/ptbxl_cache",
+                    help="缓存输出目录")
     ap.add_argument("--sampling-rate", type=int, default=100, choices=[100, 500])
     ap.add_argument("--label-set", default="diagnostic_superclass",
                     choices=["diagnostic_superclass", "diagnostic_subclass"])

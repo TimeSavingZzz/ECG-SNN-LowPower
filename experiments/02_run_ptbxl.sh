@@ -17,6 +17,7 @@ GPU=${GPU:-0}
 BATCH=${BATCH:-96}
 LR=${LR:-1e-3}
 WALLCLOCK=${WALLCLOCK:-6}
+CACHE=${CACHE:-$ROOT/results/ptbxl_cache}
 TAG=${TAG:-repro_${MODEL}_e${EPOCHS}}
 
 mkdir -p "$ROOT/logs" "$ROOT/results"
@@ -24,7 +25,7 @@ LOG=$ROOT/logs/train_$TAG.log
 
 cd "$NC"
 PYTHONPATH=. CUDA_VISIBLE_DEVICES=$GPU nohup "$PY" -m neurocardio.train \
-  --cache-dir data/ptbxl_cache \
+  --cache-dir "$CACHE" \
   --output-dir "$ROOT/results/$TAG" \
   --label-set diagnostic_superclass \
   --model "$MODEL" \
