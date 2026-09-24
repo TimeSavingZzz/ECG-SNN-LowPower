@@ -54,6 +54,21 @@ PTBXL_LABEL_CN = {
     "HYP": "心室肥大",
 }
 MITBIH_LABELS = ["N", "S", "V", "F", "Q"]
+# 图内一律用英文（容器无 CJK 字体，中文会渲染成豆腐块）；中文只出现在 HTML 正文里。
+PTBXL_LABEL_EN = {
+    "NORM": "Normal",
+    "MI": "MI",
+    "STTC": "ST/T change",
+    "CD": "Conduction",
+    "HYP": "Hypertrophy",
+}
+MITBIH_LABEL_EN = {
+    "N": "Normal",
+    "S": "Supravent.",
+    "V": "Ventricular",
+    "F": "Fusion",
+    "Q": "Unknown",
+}
 MITBIH_LABEL_CN = {
     "N": "正常搏动",
     "S": "室上性异位",
@@ -103,10 +118,23 @@ def mj(pj):
 
 
 def _finish(fig, out_png: Path, embedded: dict, key: str):
-    """存 PNG 并把 base64 收进 embedded。"""
+    """存 PNG 并把 base64 收进 embedded。
+
+    同时把 matplotlib 的「缺字形」警告升级成显式告警——容器没有 CJK 字体，
+    图里一旦混入中文就会渲染成豆腐块，必须当场发现而不是等看图时才发现。
+    """
+    import warnings
+
     fig.tight_layout()
-    fig.savefig(out_png, dpi=150, bbox_inches="tight", facecolor="white")
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        fig.savefig(out_png, dpi=150, bbox_inches="tight", facecolor="white")
     plt.close(fig)
+    missing = {str(w.message).split("Glyph ")[-1].split(" ")[0]
+               for w in caught if "missing from font" in str(w.message)}
+    if missing:
+        WARNINGS.append(f"{out_png.name} 含 {len(missing)} 个缺失字形（图内不要用中文）："
+                        f"{sorted(missing)[:6]}")
     embedded[key] = base64.b64encode(out_png.read_bytes()).decode("ascii")
     print(f"  ✓ {out_png.name}", flush=True)
 
@@ -271,7 +299,7 @@ def fig_confusion(mit_summary, out_png, embedded):
         vals = [f1.get(c, 0) or 0 for c in MITBIH_LABELS]
         axes[1].barh(y, vals, color="#d62728", alpha=0.85)
         axes[1].set_yticks(y)
-        axes[1].set_yticklabels([f"{c} ({MITBIH_LABEL_CN.get(c, '')})" for c in MITBIH_LABELS])
+        axes[1].set_yticklabels([f"{c} ({MITBIH_LABEL_EN.get(c, '')})" for c in MITBIH_LABELS])
         axes[1].invert_yaxis()
         axes[1].set(xlabel="F1", title="Per-class F1 (macro-F1 = "
                     f"{mit_summary.get('macro_f1', 0):.4f})")
@@ -383,7 +411,7 @@ def fig_per_class(comp_rows, test_metrics, out_png, embedded):
         WARNINGS.append("无逐类 AUROC，跳过图 7")
         return
     ax.set_xticks(x)
-    ax.set_xticklabels([f"{l}\n{PTBXL_LABEL_CN.get(l, '')}" for l in PTBXL_LABELS], fontsize=8.5)
+    ax.set_xticklabels([f"{l}\n{PTBXL_LABEL_EN.get(l, '')}" for l in PTBXL_LABELS], fontsize=8.5)
     ax.set_ylabel("AUROC")
     ax.set_ylim(0.5, 1.0)
     ax.set_title("Per-superclass AUROC on PTB-XL test set (fold 10)")
