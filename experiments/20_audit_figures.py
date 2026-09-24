@@ -123,7 +123,8 @@ def fig_a_nonmono(nf, out_png: Path, embedded: dict):
     ax.set_xticks(x)
     ax.set_xticklabels([f"{t:g}" for t in th])
     ax.set_xlabel("θ（Δ 调制编码阈值）")
-    ax.set_ylabel("总突触操作数 SOP（×10⁶）")
+    # 上标用 mathtext（DejaVu 渲染），别用 U+2076 —— Noto Sans CJK 没有上标数字字形
+    ax.set_ylabel(r"总突触操作数 SOP（$\times 10^{6}$）")
     ax.set_title("图 A　总 SOP 对 θ 非单调：输入层省下的被深层增发抵消", fontsize=11)
     ax.grid(alpha=0.25, ls=":")
     h1, l1 = ax.get_legend_handles_labels()
