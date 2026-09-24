@@ -32,6 +32,7 @@ import numpy as np
 import matplotlib
 
 matplotlib.use("Agg")
+import matplotlib.colors as mcolors  # noqa: E402
 import matplotlib.pyplot as plt  # noqa: E402
 
 RUN_ORDER = ["repro_snn", "repro_cnn", "repro_resnet"]
@@ -142,20 +143,61 @@ def _finish(fig, out_png: Path, embedded: dict, key: str):
 # --------------------------------------------------------------------------- #
 # 各张图
 # --------------------------------------------------------------------------- #
-def fig_pareto(rows, pareto_pts, out_png, embedded):
-    """精度-能耗帕累托：论文主图。X=估算推理能耗(mJ, 对数)，Y=macro-AUROC。"""
-    fig, ax = plt.subplots(figsize=(7.6, 5.4))
+# T_dense=2 的输出是**退化**的：五类 AUROC 恒为 0.5，模型塌缩成常数预测。
+# 能耗却是全网格最低的 ⇒ 混进散点图就是 5 个「假的高性价比点」，必须单独标记并点名。
+DEGENERATE_T_DENSE = 2
 
-    # 扫描点（若已跑）
-    if pareto_pts:
-        xs = [mj(p["energy_pj_neuromorphic"]) for p in pareto_pts
-              if p.get("energy_pj_neuromorphic")]
-        ys = [p.get("macro_auroc") for p in pareto_pts]
-        keep = [(x, y) for x, y in zip(xs, ys) if x and y is not None]
-        if keep:
-            kx, ky = zip(*keep)
-            ax.scatter(kx, ky, s=34, c="#9467bd", alpha=0.75, zorder=3,
-                       label=f"SNN sweep (θ×T_dense, n={len(keep)})")
+
+def _pareto_front(pts):
+    """在 (能耗, AUROC) 上求帕累托前沿（最小化能耗 / 最大化 AUROC）。
+
+    按能耗升序扫，只保留 AUROC 创出新高的点（同能耗自动取更高的那个）。
+    **排除 ``t_dense=2``**：那批点能耗最低而精度恒为 0.5，留在里面会把前沿
+    一路拽到左下角，掩盖真正的权衡区间。
+
+    返回 ``[(energy_mJ, auroc, point_dict), ...]``。
+    """
+    cand = []
+    for p in pts or []:
+        e, y = p.get("energy_pj_neuromorphic"), p.get("macro_auroc")
+        if not e or y is None or p.get("t_dense") == DEGENERATE_T_DENSE:
+            continue
+        cand.append((mj(e), y, p))
+    cand.sort(key=lambda t: (t[0], -t[1]))
+    front, best = [], -1.0
+    for e, y, p in cand:
+        if y > best + 1e-12:
+            best = y
+            front.append((e, y, p))
+    return front
+
+
+def fig_pareto(rows, pareto_pts, out_png, embedded):
+    """精度-能耗帕累托：论文主图。
+
+    **分两栏**——这两个故事的量纲差三个数量级，挤一张图必然压没一个：
+      (a) 全量程：SNN 扫描云 vs 稠密基线 ⇒ 省了**多少**能耗（~300×）；
+      (b) 云内放大：θ × T_dense 的权衡结构 + 帕累托前沿 ⇒ 这点能耗换来**多少**精度。
+    只画 (a) 时 24 个非退化点会缩成一根竖线（实测全落在 1.4% 的能耗区间里），
+    只有 (b) 的两条轴才有分辨率把前沿画出来。
+    """
+    fig, (ax, ax2) = plt.subplots(
+        1, 2, figsize=(13.2, 5.2), gridspec_kw={"width_ratios": [1.08, 1.0]})
+
+    def _ok(p):
+        return (p.get("energy_pj_neuromorphic") and p.get("macro_auroc") is not None)
+
+    good = [p for p in (pareto_pts or []) if _ok(p)
+            and p.get("t_dense") != DEGENERATE_T_DENSE]
+    degen = [p for p in (pareto_pts or []) if _ok(p)
+             and p.get("t_dense") == DEGENERATE_T_DENSE]
+
+    # ---- (a) 全量程 ----
+    if good or degen:
+        ax.scatter([mj(p["energy_pj_neuromorphic"]) for p in good + degen],
+                   [p["macro_auroc"] for p in good + degen],
+                   s=34, c="#9467bd", alpha=0.75, zorder=3,
+                   label=f"SNN sweep (θ×T_dense, n={len(good) + len(degen)})")
 
     for name in RUN_ORDER:
         r = next((r for r in rows if r["run_name"] == name), None)
@@ -167,8 +209,10 @@ def fig_pareto(rows, pareto_pts, out_png, embedded):
         ax.scatter([x], [y], s=130, c=COLORS[name], marker="o",
                    edgecolors="black", linewidths=0.6, zorder=5,
                    label=DISPLAY.get(name, name))
+        # SNN 的注释放右上：往左下会在横轴刻度区与退化点打架
         ax.annotate(f"{DISPLAY.get(name, name)}\n{y:.4f}\n{x:.4g} mJ",
-                    (x, y), textcoords="offset points", xytext=(9, -18),
+                    (x, y), textcoords="offset points",
+                    xytext=(9, 8) if name == "repro_snn" else (9, -18),
                     fontsize=8, color=COLORS[name])
 
     # 稠密基线的精度水平线：直观显示 SNN 用多少能耗差距换来了什么
@@ -182,17 +226,69 @@ def fig_pareto(rows, pareto_pts, out_png, embedded):
     ax.set_xscale("log")
     ax.set_xlabel("Estimated inference energy per sample  (mJ, log scale)")
     ax.set_ylabel("Test macro-AUROC")
-    ax.set_title("Accuracy–energy Pareto: SNN vs dense baselines (PTB-XL, fold 10)")
+    ax.set_title("(a) SNN vs dense baselines — the energy gap", fontsize=10)
     ax.grid(alpha=0.3, which="both")
     ax.legend(fontsize=8, loc="lower right")
-    fig.text(0.5, -0.02,
+
+    # ---- (b) 云内放大：θ 用颜色、T_dense 用点大小 ⇒ 两个扫描轴在图上都可见 ----
+    if good:
+        thetas = sorted({p["theta"] for p in good})
+        cmap = plt.get_cmap("viridis")
+        norm = mcolors.Normalize(vmin=min(thetas), vmax=max(thetas))
+        sizes = {td: 24 + 3.0 * td for td in sorted({p["t_dense"] for p in good})}
+        for p in good:
+            ax2.scatter([p["energy_pj_neuromorphic"] / 1e6], [p["macro_auroc"]],
+                        s=sizes[p["t_dense"]], c=[cmap(norm(p["theta"]))],
+                        edgecolors="black", linewidths=0.35, alpha=0.9, zorder=3)
+        for p in degen:
+            ax2.scatter([p["energy_pj_neuromorphic"] / 1e6], [p["macro_auroc"]],
+                        s=34, marker="x", c="0.45", linewidths=1.2, zorder=4)
+        ax2.axhline(0.5, ls=":", lw=1.0, c="0.55")
+        ax2.annotate(f"T_dense={DEGENERATE_T_DENSE}: degenerate output\n"
+                     f"(constant prediction, AUROC = 0.5 for all θ)",
+                     (0.02, 0.5), xycoords=("axes fraction", "data"),
+                     fontsize=7.5, color="0.4", va="bottom")
+
+        front = _pareto_front(pareto_pts)
+        if front:
+            ax2.plot([f[0] * 1000 for f in front], [f[1] for f in front],
+                     drawstyle="steps-post", c="black", lw=1.4, zorder=5,
+                     label=f"Pareto frontier (n={len(front)})")
+            be, by, bp = max(front, key=lambda f: f[1])
+            ax2.scatter([be * 1000], [by], s=170, facecolors="none",
+                        edgecolors="red", linewidths=1.7, zorder=6)
+            ax2.annotate(f"best: θ={bp['theta']:g}, T_dense={bp['t_dense']}\n"
+                         f"AUROC {by:.4f} @ {be * 1000:.3f} µJ",
+                         (be * 1000, by), textcoords="offset points",
+                         xytext=(-126, 2), fontsize=8, color="red")
+            base = next((f for f in front if f[2].get("is_baseline")), None)
+            if base:
+                ax2.scatter([base[0] * 1000], [base[1]], s=170, facecolors="none",
+                            edgecolors="blue", linewidths=1.7, zorder=6)
+                ax2.annotate(f"baseline θ=0.15, T_dense=8\nAUROC {base[1]:.4f}",
+                             (base[0] * 1000, base[1]), textcoords="offset points",
+                             xytext=(-112, -30), fontsize=8, color="blue")
+        sm = plt.cm.ScalarMappable(norm=norm, cmap=cmap)
+        sm.set_array([])
+        cb = fig.colorbar(sm, ax=ax2, pad=0.02, fraction=0.045)
+        cb.set_label("θ  (Δ-encoding threshold)", fontsize=8)
+        cb.ax.tick_params(labelsize=7)
+        ax2.legend(fontsize=8, loc="lower right")
+
+    ax2.set_xlabel("Estimated inference energy per sample  (µJ, linear scale)")
+    ax2.set_ylabel("Test macro-AUROC")
+    ax2.set_title("(b) Inside the SNN cloud — the θ × T_dense trade-off", fontsize=10)
+    ax2.grid(alpha=0.3)
+
+    fig.text(0.5, -0.015,
              "Energy = measured synaptic-operation count x published per-op constants "
-             "(3.7 pJ/MAC dense, 0.1 pJ/SOP neuromorphic). NOT a Joules measurement.",
+             "(3.7 pJ/MAC dense, 0.1 pJ/SOP neuromorphic). NOT a Joules measurement. "
+             "Marker size in (b) ∝ T_dense.",
              ha="center", fontsize=7, color="#555")
     # 扫描点与彩色点可能来自**不同权重**：训练会持续刷新 results/repro_snn/best.pt，
     # 而扫描绑定的是冻结快照（_snapshot_best.pt），彩色点则读 comparison.json。
     # 不写明来源，读者会误以为「官方 SNN 还不如它自己的扫描点」。
-    fig.text(0.5, -0.065,
+    fig.text(0.5, -0.06,
              "Sweep points use a frozen checkpoint snapshot (results/pareto/_snapshot_best.pt, "
              "checkpoint_md5 recorded per point); the filled SNN marker comes from "
              "comparison.json and may correspond to a different checkpoint.",
