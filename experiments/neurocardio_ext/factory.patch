@@ -1,0 +1,50 @@
+diff --git a/neurocardio/factory.py b/neurocardio/factory.py
+index 1e698bc..9f1169e 100644
+--- a/neurocardio/factory.py
++++ b/neurocardio/factory.py
+@@ -13,4 +13,45 @@ def make_model(name: str, num_classes: int) -> nn.Module:
+     if name in ("resnet", "resnet1d"):
+         from neurocardio.baselines import ResNet1D
+         return ResNet1D(num_classes=num_classes)
++    if name in ("sarhaddi_snn", "snn_feedforward"):
++        from neurocardio.sarhaddi import SarhaddiSNN
++        return SarhaddiSNN(num_classes=num_classes)
++    if name in ("snn_srnn", "sarhaddi_srnn"):
++        from neurocardio.sarhaddi import SarhaddiSNNSRNN
++        return SarhaddiSNNSRNN(num_classes=num_classes)
++    if name in ("snn_compact", "neurocardio_compact"):
++        from neurocardio.compact import CompactNeuroCardio
++        return CompactNeuroCardio(num_classes=num_classes)
++
++    # ---- ablation variants (Task E/F) ----
++    if name == "ab_full":
++        from neurocardio.model import NeuroCardio
++        return NeuroCardio(num_classes=num_classes)
++    if name == "ab_polarity":
++        from neurocardio.ablation import NeuroCardioPolarity
++        return NeuroCardioPolarity(num_classes=num_classes)
++    if name == "ab_multiq":
++        from neurocardio.ablation import NeuroCardioMultiQuantum
++        return NeuroCardioMultiQuantum(num_classes=num_classes)
++    if name == "ab_noattn":
++        from neurocardio.ablation import NeuroCardioNoAttn
++        return NeuroCardioNoAttn(num_classes=num_classes)
++    if name == "ab_nogate":
++        from neurocardio.ablation import NeuroCardioNoGate
++        return NeuroCardioNoGate(num_classes=num_classes)
++    if name == "ab_nodilate":
++        from neurocardio.ablation import NeuroCardioNoDilation
++        return NeuroCardioNoDilation(num_classes=num_classes)
++    if name == "ab_shallow":
++        from neurocardio.ablation import NeuroCardioShallow
++        return NeuroCardioShallow(num_classes=num_classes)
++
++    # ---- combined models (P1) ----
++    if name == "ab_shallow_pol":
++        from neurocardio.ablation import NeuroCardioShallowPolarity
++        return NeuroCardioShallowPolarity(num_classes=num_classes)
++    if name == "ab_improved":
++        from neurocardio.ablation import NeuroCardioImproved
++        return NeuroCardioImproved(num_classes=num_classes)
++
+     raise ValueError(f"unknown model: {name}")
