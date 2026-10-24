@@ -91,12 +91,12 @@ def paired(a_dirs, b_dirs):
         t_high = (DELTA - m) / se_corr
         p_tost = max(1 - ss.t.cdf(t_low, k - 1), 1 - ss.t.cdf(t_high, k - 1))
         out.update({
-            "t_naive": round(t_n, 3), "p_naive": round(p_n, 5),
-            "t_corrected": round(t_c, 3), "p_corrected": round(p_c, 5),
+            "t_naive": round(t_n, 3), "p_naive": float("%.3e" % p_n),
+            "t_corrected": round(t_c, 3), "p_corrected": float("%.3e" % p_c),
             "ci95_naive_pp": [round(m - tc * se_naive, 3), round(m + tc * se_naive, 3)],
             "ci95_corrected_pp": [round(m - tc * se_corr, 3), round(m + tc * se_corr, 3)],
             "dz": round(m / s, 3),
-            "tost_p_corrected": round(p_tost, 5),
+            "tost_p_corrected": float("%.3e" % p_tost),
             "tost_equivalent_at_1pp": bool(p_tost < 0.05),
             "mde_80pct_pp": None,
         })
