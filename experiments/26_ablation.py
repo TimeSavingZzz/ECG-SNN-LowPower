@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Train one ablation variant on PTB-XL fold-10 (Task E/F).
 
-All variants share the SAME 60-epoch config as the compact/Sarhaddi runs, so
+All variants share the SAME 100-epoch config as the compact/Sarhaddi runs, so
 they are comparable to ab_full (the same-config control) — and roughly to the
 100-epoch mainline (0.8594).
 

@@ -1,0 +1,18 @@
+# ECG-SNN-LowPower —— 复现所需依赖
+# 采集自实际训练环境：conda env "shadocformer", Python 3.10.20, CUDA 12.4
+# 安装：pip install -r requirements.txt
+# 注意：torch 必须与宿主机驱动匹配（本项目宿主 Driver 555.42.02 / CUDA 12.5，使用 cu124 轮子）
+
+torch==2.5.1
+snntorch==1.0.0
+numpy==2.2.6
+pandas==2.3.3
+scipy==1.15.3
+scikit-learn==1.7.2
+matplotlib==3.10.9
+nvidia-ml-py==13.615.71
+tqdm==4.68.3
+PyYAML==6.0.3
+
+# 上游 neurocardio 的依赖见 third_party/neurocardio/requirements.txt
+# 本项目未使用任何私有包或本地补丁包

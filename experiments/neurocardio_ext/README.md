@@ -34,3 +34,9 @@
 - `ab_shallow_pol`：3 块 + 双极性编码，528 392 参数，十折 AUROC 0.8941 ± 0.0081
 - 训练入口：`experiments/26_ablation.py`（单折）、`experiments/25_multifold.py`（多折）
 - 十折批跑：`launch_p10_multifold.sh`
+
+## 许可
+
+上游 neurocardio 为 MIT 许可。本目录中的 factory.py 是其派生文件（改动见 factory.patch），
+其余三个文件为新增模块，仅 import 上游代码、未复制其源码。上游 clone 中未附 LICENSE 文件，
+复现时请以上游仓库页面标注的许可为准。

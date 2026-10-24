@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Ablation variants for NeuroCardio (Task E/F).
 
-Two groups, all trained under the SAME 60-epoch config so they are comparable:
+Two groups, all trained under the SAME 100-epoch config so they are comparable:
 
   Encoder ablation — how much of the 4.5pp gap is caused by the encoder?
     * ab_polarity : replace the delta encoder with Sarhaddi's dual-polarity
