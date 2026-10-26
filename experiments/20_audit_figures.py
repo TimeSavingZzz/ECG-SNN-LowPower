@@ -397,6 +397,29 @@ def fig_f_bn(bnp, out_png: Path, embedded: dict):
 # --------------------------------------------------------------------------- #
 # HTML
 # --------------------------------------------------------------------------- #
+def layer_delta_text(nf):
+    """逐层响应：由 16 号产物的 per_layer_k 现算，不再硬编码。
+
+    2026-10-26 修正：原实现把 θ=0.3/0.15 的逐层差值写成字面量，而字面量来自
+    9/24 的中间权重（md5 738d5ed1…）。换成最终权重后连 stem 的符号都反了
+    （硬编码 +0.0220，实测 −0.0213）。改为现算，杜绝再次失效。
+    """
+    if not nf or not nf.get("rows"):
+        return "（缺 16 号标定产物，逐层变化未计算）"
+    rows = {round(float(r["theta"]), 3): r for r in nf["rows"]}
+    a, b = rows.get(0.15), rows.get(0.3)
+    if not a or not b:
+        return "（缺 θ=0.15 或 0.3 标定行，逐层变化未计算）"
+    pk = a["per_layer_k"]
+    order = ["input", "stem"] + [k for k in pk if k.startswith("block")] + ["fc"]
+    parts = ["%s %+.4f" % (k, b["per_layer_k"][k] - pk[k])
+             for k in order if k in pk and k in b["per_layer_k"]]
+    return ("逐层发放率在 θ=0.3 相对 0.15 的变化（fold-%s 标定集，K=%s batch，T_dense=%s）：%s"
+            " \u21d2 输入侧降发、中段与分类头增发，符号随深度翻转。"
+            % (nf.get("calib_fold", "?"), nf.get("k_batches", "?"),
+               nf.get("t_dense", "?"), "\u3001".join(parts)))
+
+
 def build_html(meta, verdicts, findings, embedded) -> str:
     def img(key, cap):
         b64 = embedded.get(key)
@@ -543,9 +566,7 @@ def main() -> None:
         findings.append({
             "title": name,
             "body": "数据见表与图；判据由脚本自动给出。",
-            "verdict": cfg.get(verdict_key) if verdict_key else
-                       ("逐层发放率在 θ=0.3 相对 0.15 的变化：input −0.1020、stem +0.0220、"
-                        "block2 +0.0160、block3 +0.0138、block0 −0.0044 ⇒ 符号随深度翻转。"),
+            "verdict": cfg.get(verdict_key) if verdict_key else layer_delta_text(nf),
         })
 
     data = {"meta": meta, "findings": findings,
