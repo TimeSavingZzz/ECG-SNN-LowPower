@@ -3,6 +3,10 @@
 > 产物：`results/theta_sweep_ab_polarity.json`（md5 `b44fa083`，60 行 = 6 θ × 10 折）。
 > 脚本：`experiments/46_ab_polarity_theta.py`（4 卡分片）+ `experiments/47_merge_polarity.py`。
 > **纯推理，不训练。** 所有 checkpoint 都是 θ=0.15 训练；θ 扫描为零样本灵敏度分析。
+>
+> ⚠️ **2026-11-05 补跑**：T 切片已补齐（5 个 T × 6 θ × 10 折 = 300 行，新 md5 `d907417c`），
+> 见 `E13_ab_polarity_T_slices.md`。θ 在每个 T 上仍**逐位相同**；
+> **§4 第 4 条「只扫了 T_dense=8」的分辨率限制不再适用**，本节其余结论不变。
 
 ---
 
