@@ -26,10 +26,20 @@ R = ROOT / "results"
 SRC = R / "p10_summary.json"
 OUT = R / "nb_sensitivity.json"
 
-# 每折测试集大小（实测：PTBXLCache(fold_subset=[f]) 的 len）；n_train = 总样本 − n_test
+# 每折测试集大小（实测：PTBXLCache(fold_subset=[f]) 的 len）；n_train = 总样本 − n_test − n_val
 N_TEST = {1: 2139, 2: 2138, 3: 2150, 4: 2130, 5: 2135,
           6: 2129, 7: 2134, 8: 2129, 9: 2146, 10: 2158}
 N_TOTAL = 21388  # 十折测试集之和（带 5 超类标注的样本总量）
+
+
+def val_fold(f: int) -> int:
+    """与 25_multifold.py 的 split() 一致：val = test−1，fold1 时 val=10。"""
+    return 10 if f == 1 else f - 1
+
+
+def n_train_of(f: int) -> int:
+    """实际参与训练的样本数：除测试折与验证折之外的 8 折。"""
+    return N_TOTAL - N_TEST[f] - N_TEST[val_fold(f)]
 
 
 def holm(pvals: list[tuple[str, float]]) -> dict:
@@ -67,8 +77,8 @@ def main() -> None:
             df = J - 1
             t_plain = float(c.get("t") or mean / (s / J ** 0.5))
             p_plain = float(c.get("p") or 2 * stats.t.sf(abs(t_plain), df))
-            # NB：r 取逐折比值的平均
-            r = float(sum(N_TEST[f] / (N_TOTAL - N_TEST[f]) for f in folds) / J)
+            # NB：r = n_test/n_train，n_train 是**实际参与训练**的 8 折（验证折不参与训练）
+            r = float(sum(N_TEST[f] / n_train_of(f) for f in folds) / J)
             var_nb = s ** 2 * (1.0 / J + r)
             t_nb = float(mean / var_nb ** 0.5)
             p_nb = float(2 * stats.t.sf(abs(t_nb), df))
@@ -82,6 +92,7 @@ def main() -> None:
                 "comparison": name, "folds": folds, "per_fold_delta": deltas,
                 "delta_mean": round(mean, 6), "delta_std": round(s, 6), "df": df,
                 "r_test_over_train": round(r, 6),
+                "se_inflation_x": round((1.0 + J * r) ** 0.5, 4),
                 "t_plain": round(t_plain, 4), "p_plain": round(p_plain, 6),
                 "t_nb": round(t_nb, 4), "p_nb": round(p_nb, 6),
                 "p_inflation_x": round(p_nb / p_plain, 3) if p_plain > 0 else None,
