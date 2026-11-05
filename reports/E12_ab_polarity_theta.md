@@ -17,7 +17,7 @@
 | 配置 | `ab_polarity`：6 个 S-TCN block，前端 `dual_polarity_encode`（连续整流值，**无 θ 参数**） |
 | 折 | 1–10，每折用该折测试集 |
 | θ | 0.05 / 0.075 / 0.1 / 0.15 / 0.2 / 0.3 |
-| T_dense | **只扫 8**（运行时间考虑；T 切片对 SOP 无影响、对 AUROC <1 pp，见 E10） |
+| T_dense | **只扫 8**（运行时间考虑；T 对 SOP 只影响 **<0.5%**、对 AUROC **≤1.3 pp**，见 E10，实测见 E13） |
 | 标定 | val fold（fold1→10，其余 f−1），`batch_size=32`，前 8 batch |
 | 权重 | 十折各自 `best.pt`（`repro_ab_polarity_fold*` + fold10 原消融目录） |
 
