@@ -47,10 +47,18 @@ rows.sort(key=lambda r: r["theta_bin"])
 
 out = {
     "note": "012 binary-frontend retrain pilot (E17): fold 10, 100 epochs, 4 GPUs. "
-            "Zero-shot counterpart in E16; continuous reference is the existing "
-            "fold-10 ab_shallow_pol run (0.8791).",
-    "continuous_reference": {"model": "ab_shallow_pol", "fold": 10,
-                             "test_macro_auroc": 0.8791},
+            "Zero-shot counterpart in E16. Continuous reference is the existing "
+            "fold-10 ab_shallow_pol run read from its test_metrics.json, i.e. the "
+            "same eval protocol as the pilot runs (0.8796). E16 lists 0.8791 for the "
+            "same checkpoint under the probe protocol (T_dense=8, batch 64); the "
+            "0.04 pp difference is protocol noise but the two must not be mixed.",
+    "continuous_reference": {
+        "model": "ab_shallow_pol",
+        "fold": 10,
+        "test_macro_auroc": 0.879566,
+        "source": "results/repro_ab_shallow_pol_fold10/test_metrics.json",
+        "probe_protocol_value": 0.879148,
+    },
     "runs": rows,
 }
 path = os.path.join(ROOT, "bin_pilot_summary.json")
