@@ -66,6 +66,9 @@ CONFIGS = {
                        "repro_ab_shallow_fold{f}"),
     "ab_shallow_pol": ("ab_shallow_pol", "repro_ab_shallow_pol_fold10",
                        "repro_ab_shallow_pol_fold{f}"),
+    "ab_shallow_pol_bin100": ("ab_shallow_pol_bin100",
+                       "repro_ab_shallow_pol_bin100_fold10",
+                       "repro_ab_shallow_pol_bin100_fold{f}"),
 }
 
 
