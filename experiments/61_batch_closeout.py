@@ -48,6 +48,54 @@ def auroc(model, fold):
     return float(json.load(open(p))["macro_auroc"])
 
 
+def auprc_of(model, fold):
+    d = dirs_for(model, [fold])[fold]
+    p = os.path.join(ROOT, "results", d, "test_metrics.json")
+    if not os.path.exists(p):
+        return None
+    return float(json.load(open(p))["macro_auprc"])
+
+
+def paired_auprc(ref_model, var_model, folds):
+    """Same paired statistics as `paired`, on macro-AUPRC (both directions)."""
+    ref, var, used = [], [], []
+    for f in folds:
+        a, b = auprc_of(ref_model, f), auprc_of(var_model, f)
+        if a is None or b is None:
+            continue
+        ref.append(a); var.append(b); used.append(f)
+    n = len(used)
+    if n < 2:
+        return None
+    d = [v - r for r, v in zip(ref, var)]
+    m = sum(d) / n
+    sd = math.sqrt(sum((x - m) ** 2 for x in d) / (n - 1))
+    se = sd / math.sqrt(n)
+    df = n - 1
+    t = m / se
+    p = 2 * ss.t.sf(abs(t), df)
+    half = ss.t.ppf(0.975, df) * se
+    m80 = mdd80(m, se, df)
+    return {
+        "folds_used": used, "n_folds": n,
+        "reference_mean": round(sum(ref) / n, 6),
+        "variant_mean": round(sum(var) / n, 6),
+        "per_fold_delta": [round(x, 6) for x in d],
+        "delta_mean_pp": round(m * 100, 4),
+        "delta_sd_pp": round(sd * 100, 4),
+        "ci95_pp": [round((m - half) * 100, 4), round((m + half) * 100, 4)],
+        "t": round(t, 4), "p": round(p, 4),
+        "n_folds_won": sum(1 for x in d if x > 0),
+        "mdd80_pp": round(m80 * 100, 4),
+        "nb_factor": NB_FACTOR,
+        "t_nb": round(t / NB_FACTOR, 4),
+        "p_nb": round(2 * ss.t.sf(abs(t / NB_FACTOR), df), 4),
+        "ci95_nb_pp": [round((m - half * NB_FACTOR) * 100, 4),
+                       round((m + half * NB_FACTOR) * 100, 4)],
+        "mdd80_nb_pp": round(m80 * NB_FACTOR * 100, 4),
+    }
+
+
 def mdd80(delta, se, df, power=0.80, alpha=0.05):
     """Smallest |delta| reaching `power` (noncentral t), given the observed se."""
     ncp_of = lambda d: d / se
@@ -134,6 +182,7 @@ def main():
         if r:
             r["depth"] = L
             r["params"] = params["ab_pref%d" % L]
+            r["auprc"] = paired_auprc("ab_full", "ab_pref%d" % L, folds)
             depth.append(r)
 
     # ab_full itself (reference row of the curve)
@@ -196,6 +245,11 @@ def main():
                   r["depth"], r["variant"], r["params"], r["mean_variant"],
                   r["delta_mean_pp"], r["p"], r["p_nb"], r["mdd80_nb_pp"],
                   r["n_folds_won"], r["n_folds"]))
+        a = r.get("auprc")
+        if a:
+            print("      AUPRC: %.4f -> %.4f  delta=%+.3f pp  p_nb=%.4f  won=%d/%d" % (
+                a["reference_mean"], a["variant_mean"], a["delta_mean_pp"],
+                a["p_nb"], a["n_folds_won"], a["n_folds"]))
     if binary:
         print("\n== binary frontend tenfold ==")
         print("  continuous %.4f  binary %.4f  delta=%+.3f pp  p=%.4f  p_nb=%.4f  "
