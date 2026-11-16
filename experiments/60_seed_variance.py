@@ -45,10 +45,27 @@ HRS_PER_RUN = 11.3
 N_GPUS = 4
 
 
+# fold 10 seed 0 lives in the ORIGINAL ablation dirs for these three models
+# (the tenfold repro campaign only re-ran folds 1-9 for them).
+FOLD10_SEED0_DIRS = {
+    "ab_full": "ablation_full",
+    "ab_shallow": "ablation_shallow_3blocks",
+    "ab_polarity": "ablation_encoder_polarity",
+    "ab_shallow_pol": "repro_ab_shallow_pol_fold10",
+}
+
+
 def metrics_path(model, fold, seed):
     suffix = "" if seed == 0 else "_s%d" % seed
-    return os.path.join(ROOT, "results", "repro_%s_fold%d%s" % (model, fold, suffix),
-                        "test_metrics.json")
+    p = os.path.join(ROOT, "results", "repro_%s_fold%d%s" % (model, fold, suffix),
+                     "test_metrics.json")
+    if os.path.exists(p):
+        return p
+    if seed == 0 and fold == 10 and model in FOLD10_SEED0_DIRS:
+        alt = os.path.join(ROOT, "results", FOLD10_SEED0_DIRS[model], "test_metrics.json")
+        if os.path.exists(alt):
+            return alt
+    return p
 
 
 def load_auroc(model, fold, seed):
