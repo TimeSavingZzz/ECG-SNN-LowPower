@@ -69,6 +69,13 @@ CONFIGS = {
     "ab_shallow_pol_bin100": ("ab_shallow_pol_bin100",
                        "repro_ab_shallow_pol_bin100_fold10",
                        "repro_ab_shallow_pol_bin100_fold{f}"),
+    # width-matched depth family (batch 020d): fold 10 also lives in repro_*
+    "ab_pref3":       ("ab_pref3",       "repro_ab_pref3_fold10",
+                       "repro_ab_pref3_fold{f}"),
+    "ab_pref4":       ("ab_pref4",       "repro_ab_pref4_fold10",
+                       "repro_ab_pref4_fold{f}"),
+    "ab_pref5":       ("ab_pref5",       "repro_ab_pref5_fold10",
+                       "repro_ab_pref5_fold{f}"),
 }
 
 
